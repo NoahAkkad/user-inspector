@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (
 
 @dataclass
 class ExcelData:
-    """Loader for Company 1 Excel files."""
+    """Loader for My Chips Excel files."""
 
     dataframe: Optional[pd.DataFrame] = None
 
@@ -63,7 +63,7 @@ class ExcelData:
 
 @dataclass
 class PostbackData:
-    """Loader for Company 2 CSV files with postback parsing."""
+    """Loader for Prime CSV files with postback parsing."""
 
     dataframe: Optional[pd.DataFrame] = None
 
@@ -397,7 +397,7 @@ class MainWindow(QMainWindow):
         top_bar.setSpacing(10)
 
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Company 1", "Company 2"])
+        self.mode_combo.addItems(["My Chips", "Prime"])
 
         self.load_button = QPushButton("Load File")
         self.load_button.clicked.connect(self.load_file)
@@ -563,7 +563,7 @@ class MainWindow(QMainWindow):
     def load_file(self) -> None:
         mode = self.mode_combo.currentText()
 
-        if mode == "Company 1":
+        if mode == "My Chips":
             file_path, _ = QFileDialog.getOpenFileName(
                 self,
                 "Load Excel File",
@@ -589,7 +589,7 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
         try:
-            if mode == "Company 1":
+            if mode == "My Chips":
                 df = self.excel_data.load(file_path)
             else:
                 df = self.postback_data.load(file_path)
