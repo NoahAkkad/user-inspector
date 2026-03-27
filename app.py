@@ -36,19 +36,11 @@ class ExcelData:
 
     REQUIRED_COLUMNS = ["UserID", "AppName", "Payout", "DateTime"]
     RENAME_MAP = {
-        "UserID": "raw_user",
-        "AppName": "app",
+        "UserID": "user_id",
+        "AppName": "app_id",
         "Payout": "payout",
         "DateTime": "date",
     }
-
-    @staticmethod
-    def _extract_user_parts(raw_user: str) -> tuple[str, str]:
-        raw_user = (raw_user or "").strip()
-        if "-" in raw_user:
-            app_id, user_id = raw_user.split("-", 1)
-            return app_id.strip(), user_id.strip()
-        return "", raw_user
 
     def load(self, path: str) -> pd.DataFrame:
         df = pd.read_excel(path)
@@ -57,13 +49,8 @@ class ExcelData:
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
         df = df[self.REQUIRED_COLUMNS].rename(columns=self.RENAME_MAP).copy()
-
-        parsed_parts = df["raw_user"].astype(str).apply(self._extract_user_parts)
-        df["app_id"] = parsed_parts.str[0].astype(str).str.strip()
-        df["user_id"] = parsed_parts.str[1].astype(str).str.strip()
-
-        fallback_app = df["app"].astype(str).str.strip()
-        df.loc[df["app_id"] == "", "app_id"] = fallback_app[df["app_id"] == ""]
+        df["user_id"] = df["user_id"].fillna("").astype(str).str.strip()
+        df["app_id"] = df["app_id"].fillna("").astype(str).str.strip()
 
         df["payout"] = pd.to_numeric(df["payout"], errors="coerce")
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -119,10 +106,10 @@ class PostbackData:
 
         parsed_df = df["Postback URL"].apply(self._parse_postback_url).apply(pd.Series)
         df = pd.concat([df.copy(), parsed_df], axis=1)
-        df["user_id"] = df["user_id"].astype(str).str.strip()
-        df["app_id"] = df["app_id"].astype(str).str.strip()
+        df["user_id"] = df["user_id"].fillna("").astype(str).str.strip()
+        df["app_id"] = df["app_id"].fillna("").astype(str).str.strip()
         if "advertising_id" in df.columns:
-            df["advertising_id"] = df["advertising_id"].astype(str).str.strip()
+            df["advertising_id"] = df["advertising_id"].fillna("").astype(str).str.strip()
 
         self.dataframe = df
         return df
@@ -552,6 +539,8 @@ class MainWindow(QMainWindow):
             return
 
         selected_app = self.app_selector.currentText()
+        print("Searching:", user_id, selected_app)
+        print("Available user_ids:", self.model.dataframe["user_id"].unique()[:10])
         self.advertising_id_input.clear()
         self.proxy.update_user_search(user_id=user_id, app_id=selected_app)
         self._on_proxy_changed()
