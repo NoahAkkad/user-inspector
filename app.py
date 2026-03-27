@@ -436,15 +436,18 @@ class MainWindow(QMainWindow):
             QTableView {
                 border: 1px solid #e2e8f0;
                 border-radius: 12px;
-                background: #ffffff;
+                color: #000000;
+                background-color: #ffffff;
                 alternate-background-color: #f8fafc;
-                selection-background-color: #dbeafe;
-                selection-color: #1e293b;
                 gridline-color: #eff4fa;
                 outline: 0;
             }
             QTableView::item { padding: 8px; border: none; }
             QTableView::item:hover { background-color: #edf4ff; }
+            QTableView::item:selected {
+                background-color: #0078d7;
+                color: #ffffff;
+            }
 
             QHeaderView::section {
                 background-color: #f1f5f9;
@@ -477,7 +480,7 @@ class MainWindow(QMainWindow):
         if "app_id" not in df.columns:
             return
 
-        unique_apps = sorted({str(value).strip() for value in df["app_id"] if str(value).strip()})
+        unique_apps = df["app_id"].dropna().unique()
         self.app_selector.addItems(unique_apps)
 
     def load_file(self) -> None:
@@ -512,6 +515,10 @@ class MainWindow(QMainWindow):
 
         try:
             df = self.excel_data.load(file_path) if mode == "My Chips" else self.postback_data.load(file_path)
+            if mode == "My Chips":
+                df["app_id"] = df["app_id"].astype(str).str.strip()
+                df["user_id"] = df["user_id"].astype(str).str.strip()
+                print("App IDs:", df["app_id"].unique()[:20])
             self.model.set_dataframe(df.reset_index(drop=True))
             self.proxy.clear_filters()
             self.user_id_input.clear()
