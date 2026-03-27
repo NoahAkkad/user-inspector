@@ -1,8 +1,6 @@
-import re
 import sys
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, Optional
+from typing import Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 import pandas as pd
@@ -13,7 +11,6 @@ from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -54,6 +51,7 @@ class ExcelData:
         df = df[self.REQUIRED_COLUMNS].rename(columns=self.RENAME_MAP).copy()
         df["user_id"] = df["user_id"].astype(str).str.strip()
         df["app"] = df["app"].astype(str).str.strip()
+        df["app_id"] = df["app"].astype(str).str.strip()
         df["payout"] = pd.to_numeric(df["payout"], errors="coerce")
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
@@ -67,11 +65,12 @@ class PostbackData:
 
     dataframe: Optional[pd.DataFrame] = None
 
-    def _extract_user_id(self, raw_user: str) -> str:
+    def _extract_user_parts(self, raw_user: str) -> tuple[str, str]:
         raw_user = (raw_user or "").strip()
         if "-" in raw_user:
-            return raw_user.split("-")[-1]
-        return raw_user
+            app_id, user_id = raw_user.split("-", 1)
+            return app_id.strip(), user_id.strip()
+        return "", raw_user
 
     def _parse_postback_url(self, postback_url: str) -> dict:
         parsed = urlparse(str(postback_url))
@@ -84,9 +83,11 @@ class PostbackData:
         task_name = params.get("task_name", [""])[0]
         status = params.get("status", [""])[0]
         app = params.get("app", [""])[0]
+        app_id, user_id = self._extract_user_parts(raw_user)
 
         return {
-            "user_id": self._extract_user_id(raw_user),
+            "app_id": str(app_id),
+            "user_id": str(user_id),
             "payout": pd.to_numeric(payout, errors="coerce"),
             "reward": pd.to_numeric(reward, errors="coerce"),
             "offer_name": unquote(offer_name),
@@ -103,6 +104,7 @@ class PostbackData:
         parsed_df = df["Postback URL"].apply(self._parse_postback_url).apply(pd.Series)
         df = pd.concat([df.copy(), parsed_df], axis=1)
         df["user_id"] = df["user_id"].astype(str).str.strip()
+        df["app_id"] = df["app_id"].astype(str).str.strip()
 
         self.dataframe = df
         return df
@@ -165,33 +167,19 @@ class DataModel(QAbstractTableModel):
 
 
 class ProxyModel(QSortFilterProxyModel):
-    SEARCH_FIELDS = ["user_id", "offer_name", "task_name", "app"]
-
     def __init__(self) -> None:
         super().__init__()
-        self.search_field = "global"
-        self.search_mode = "contains"
         self.search_query = ""
-        self.column_filters: Dict[str, str] = {}
         self.setFilterCaseSensitivity(Qt.CaseInsensitive)
         self.setSortCaseSensitivity(Qt.CaseInsensitive)
         self.setDynamicSortFilter(True)
 
-    def update_search(self, field: str, mode: str, query: str) -> None:
-        self.search_field = field
-        self.search_mode = mode
+    def update_search(self, query: str) -> None:
         self.search_query = query.strip()
         self.invalidateFilter()
 
-    def update_column_filter(self, column: str, expression: str) -> None:
-        self.column_filters[column] = expression.strip()
-        self.invalidateFilter()
-
     def clear_filters(self) -> None:
-        self.search_field = "global"
-        self.search_mode = "contains"
         self.search_query = ""
-        self.column_filters.clear()
         self.invalidateFilter()
 
     def _get_source_value(self, row: int, column_name: str):
@@ -199,122 +187,6 @@ class ProxyModel(QSortFilterProxyModel):
         if not isinstance(model, DataModel) or column_name not in model.dataframe.columns:
             return None
         return model.dataframe.iloc[row][column_name]
-
-    def _text_match(self, value: str, query: str, mode: str) -> bool:
-        value_l = value.lower()
-        query_l = query.lower()
-        if mode == "exact":
-            return value_l == query_l
-        if mode == "starts_with":
-            return value_l.startswith(query_l)
-        return query_l in value_l
-
-    def _apply_numeric_filter(self, value, expression: str) -> bool:
-        if expression == "":
-            return True
-        number = pd.to_numeric(value, errors="coerce")
-        if pd.isna(number):
-            return False
-
-        expr = expression.replace(" ", "")
-        range_match = re.fullmatch(r"(-?\d+(?:\.\d+)?)\.\.(-?\d+(?:\.\d+)?)", expr)
-        if range_match:
-            low = float(range_match.group(1))
-            high = float(range_match.group(2))
-            return low <= float(number) <= high
-
-        op_match = re.fullmatch(r"(<=|>=|=|<|>)(-?\d+(?:\.\d+)?)", expr)
-        if op_match:
-            op, rhs = op_match.group(1), float(op_match.group(2))
-            lhs = float(number)
-            return {
-                "<": lhs < rhs,
-                ">": lhs > rhs,
-                "=": lhs == rhs,
-                "<=": lhs <= rhs,
-                ">=": lhs >= rhs,
-            }[op]
-
-        simple_number = re.fullmatch(r"-?\d+(?:\.\d+)?", expr)
-        if simple_number:
-            return float(number) == float(expr)
-
-        return False
-
-    def _parse_date(self, value):
-        if isinstance(value, pd.Timestamp):
-            return value.to_pydatetime()
-        if isinstance(value, datetime):
-            return value
-        parsed = pd.to_datetime(value, errors="coerce")
-        if pd.isna(parsed):
-            return None
-        return parsed.to_pydatetime()
-
-    def _apply_date_filter(self, value, expression: str) -> bool:
-        if expression == "":
-            return True
-        date_value = self._parse_date(value)
-        if date_value is None:
-            return False
-
-        expr = expression.strip()
-        between_match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})", expr)
-        if between_match:
-            start = datetime.fromisoformat(between_match.group(1))
-            end = datetime.fromisoformat(between_match.group(2))
-            return start.date() <= date_value.date() <= end.date()
-
-        op_match = re.fullmatch(r"(<=|>=|=|<|>)(\d{4}-\d{2}-\d{2})", expr)
-        if op_match:
-            op, rhs_s = op_match.group(1), op_match.group(2)
-            rhs = datetime.fromisoformat(rhs_s).date()
-            lhs = date_value.date()
-            return {
-                "<": lhs < rhs,
-                ">": lhs > rhs,
-                "=": lhs == rhs,
-                "<=": lhs <= rhs,
-                ">=": lhs >= rhs,
-            }[op]
-
-        exact_match = re.fullmatch(r"\d{4}-\d{2}-\d{2}", expr)
-        if exact_match:
-            return date_value.date() == datetime.fromisoformat(expr).date()
-
-        return False
-
-    def _column_passes(self, row: int) -> bool:
-        model = self.sourceModel()
-        if not isinstance(model, DataModel):
-            return True
-
-        for column_name, expression in self.column_filters.items():
-            if expression == "" or column_name not in model.dataframe.columns:
-                continue
-
-            value = self._get_source_value(row, column_name)
-            lower_name = column_name.lower()
-
-            if lower_name in {"payout", "reward"}:
-                if not self._apply_numeric_filter(value, expression):
-                    return False
-            elif "date" in lower_name or "time" in lower_name:
-                if not self._apply_date_filter(value, expression):
-                    return False
-            else:
-                if expression.lower() == "(blank)":
-                    if str(value).strip() != "":
-                        return False
-                elif expression.lower().startswith("exact:"):
-                    exact_val = expression.split(":", 1)[1].strip()
-                    if str(value).strip().lower() != exact_val.lower():
-                        return False
-                else:
-                    if expression.lower() not in str(value).lower():
-                        return False
-
-        return True
 
     def _search_passes(self, row: int) -> bool:
         if not self.search_query:
@@ -324,22 +196,25 @@ class ProxyModel(QSortFilterProxyModel):
         if not isinstance(model, DataModel) or model.dataframe.empty:
             return False
 
-        if self.search_field == "global":
-            values = [
-                str(model.dataframe.iat[row, col_idx])
-                for col_idx in range(len(model.dataframe.columns))
-            ]
-            return any(self._text_match(value, self.search_query, self.search_mode) for value in values)
-
-        if self.search_field not in model.dataframe.columns:
+        user_id = str(self._get_source_value(row, "user_id") or "").strip()
+        if "user_id" not in model.dataframe.columns:
             return False
 
-        value = str(self._get_source_value(row, self.search_field))
-        return self._text_match(value, self.search_query, self.search_mode)
+        query = self.search_query.strip()
+        if "-" in query:
+            if "app_id" not in model.dataframe.columns:
+                return False
+            app_part, user_part = query.split("-", 1)
+            query_app_id = app_part.strip().lower()
+            query_user_id = user_part.strip()
+            row_app_id = str(self._get_source_value(row, "app_id") or "").strip().lower()
+            return row_app_id == query_app_id and user_id == query_user_id
+
+        return user_id == query
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
         del source_parent
-        return self._column_passes(source_row) and self._search_passes(source_row)
+        return self._search_passes(source_row)
 
 
 class DataTableView(QTableView):
@@ -368,12 +243,10 @@ class DataTableView(QTableView):
 
 
 class MainWindow(QMainWindow):
-    SEARCH_FIELDS = ["global", "user_id", "offer_name", "task_name", "app"]
-
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("User Inspector")
-        self.resize(1460, 900)
+        self.resize(1200, 820)
 
         self.excel_data = ExcelData()
         self.postback_data = PostbackData()
@@ -381,8 +254,6 @@ class MainWindow(QMainWindow):
         self.model = DataModel()
         self.proxy = ProxyModel()
         self.proxy.setSourceModel(self.model)
-
-        self._filter_inputs: Dict[str, QLineEdit] = {}
 
         self._build_ui()
         self._apply_styles()
@@ -397,7 +268,6 @@ class MainWindow(QMainWindow):
 
         root.addWidget(self.create_top_bar())
         root.addWidget(self.create_search_bar())
-        root.addWidget(self.create_filter_bar())
         root.addWidget(self.create_table(), 1)
         root.addWidget(self.create_footer())
 
@@ -435,14 +305,8 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search records...")
+        self.search_input.setPlaceholderText("Search by user_id (e.g. 256772) or app_id-user_id (e.g. stgplus-256772)")
         self.search_input.returnPressed.connect(self.apply_search)
-
-        self.search_mode_combo = QComboBox()
-        self.search_mode_combo.addItems(["contains", "exact", "starts_with"])
-
-        self.search_field_combo = QComboBox()
-        self.search_field_combo.addItems(self.SEARCH_FIELDS)
 
         self.search_button = QPushButton("Search")
         self.search_button.setProperty("kind", "primary")
@@ -455,49 +319,8 @@ class MainWindow(QMainWindow):
         self.reset_button.clicked.connect(self.reset_all_filters)
 
         layout.addWidget(self.search_input, 4)
-        layout.addWidget(self.search_mode_combo, 1)
-        layout.addWidget(self.search_field_combo, 1)
         layout.addWidget(self.search_button)
         layout.addWidget(self.reset_button)
-        return frame
-
-    def create_filter_bar(self) -> QFrame:
-        frame = QFrame()
-        outer = QVBoxLayout(frame)
-        outer.setContentsMargins(12, 10, 12, 10)
-        outer.setSpacing(8)
-
-        controls = QHBoxLayout()
-        controls.setSpacing(10)
-
-        self.sort_field_combo = QComboBox()
-        self.sort_field_combo.addItem("(none)")
-
-        self.sort_order_combo = QComboBox()
-        self.sort_order_combo.addItems(["Ascending", "Descending"])
-
-        self.sort_button = QPushButton("Apply Sort")
-        self.sort_button.setProperty("kind", "secondary")
-        self.sort_button.clicked.connect(self.apply_sort)
-
-        controls.addWidget(QLabel("Sort by"))
-        controls.addWidget(self.sort_field_combo, 2)
-        controls.addWidget(self.sort_order_combo, 1)
-        controls.addWidget(self.sort_button)
-        controls.addStretch()
-
-        self.filter_form = QFormLayout()
-        self.filter_form.setHorizontalSpacing(12)
-        self.filter_form.setVerticalSpacing(8)
-        self.filter_form.addRow(
-            QLabel(
-                "Load a file to enable per-column filters. "
-                "Text: contains or exact:value | Numeric: >0.5, <=3, 1..4 | Date: >=2025-01-01, 2025-01-01..2025-01-31"
-            )
-        )
-
-        outer.addLayout(controls)
-        outer.addLayout(self.filter_form)
         return frame
 
     def create_table(self) -> QFrame:
@@ -617,38 +440,6 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Loading file..." if is_loading else "Ready")
         QApplication.setOverrideCursor(Qt.WaitCursor) if is_loading else QApplication.restoreOverrideCursor()
 
-    def _clear_filter_rows(self) -> None:
-        while self.filter_form.rowCount() > 0:
-            self.filter_form.removeRow(0)
-        self._filter_inputs.clear()
-
-    def _build_filter_rows(self, columns) -> None:
-        self._clear_filter_rows()
-        self.sort_field_combo.clear()
-        self.sort_field_combo.addItem("(none)")
-
-        if not columns:
-            self.filter_form.addRow(QLabel("No columns available."))
-            return
-
-        self.sort_field_combo.addItems(columns)
-        for col in columns:
-            line_edit = QLineEdit()
-            lower = col.lower()
-            if lower in {"payout", "reward"}:
-                line_edit.setPlaceholderText("e.g. >0.5, <=2, 0.5..3")
-            elif "date" in lower or "time" in lower:
-                line_edit.setPlaceholderText("e.g. >=2025-01-01, 2025-01-01..2025-01-31")
-            else:
-                line_edit.setPlaceholderText("contains text or exact:value")
-            line_edit.textChanged.connect(lambda value, c=col: self._on_column_filter_changed(c, value))
-            self.filter_form.addRow(QLabel(col), line_edit)
-            self._filter_inputs[col] = line_edit
-
-    def _on_column_filter_changed(self, column: str, value: str) -> None:
-        self.proxy.update_column_filter(column, value)
-        self._on_proxy_changed()
-
     def load_file(self) -> None:
         mode = self.mode_combo.currentText()
 
@@ -683,11 +474,8 @@ class MainWindow(QMainWindow):
             df = self.excel_data.load(file_path) if mode == "My Chips" else self.postback_data.load(file_path)
             self.model.set_dataframe(df.reset_index(drop=True))
             self.proxy.clear_filters()
-            self.search_field_combo.setCurrentText("global")
-            self.search_mode_combo.setCurrentText("contains")
             self.search_input.clear()
 
-            self._build_filter_rows(list(df.columns))
             self._autosize_columns()
             self._on_proxy_changed()
             self.status_label.setText(f"Loaded {len(df)} rows")
@@ -703,45 +491,15 @@ class MainWindow(QMainWindow):
             self.show_error("Please load a file first.")
             return
 
-        self.proxy.update_search(
-            self.search_field_combo.currentText(),
-            self.search_mode_combo.currentText(),
-            self.search_input.text(),
-        )
+        self.proxy.update_search(self.search_input.text())
         self._on_proxy_changed()
-
-    def apply_sort(self) -> None:
-        if self.model.dataframe.empty:
-            return
-
-        field = self.sort_field_combo.currentText()
-        if field == "(none)":
-            self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
-            return
-
-        source_columns = list(self.model.dataframe.columns)
-        if field not in source_columns:
-            return
-
-        column_index = source_columns.index(field)
-        order = Qt.AscendingOrder if self.sort_order_combo.currentText() == "Ascending" else Qt.DescendingOrder
-        self.table.sortByColumn(column_index, order)
 
     def reset_all_filters(self) -> None:
         if self.model.dataframe.empty:
             return
 
         self.proxy.clear_filters()
-        self.search_field_combo.setCurrentText("global")
-        self.search_mode_combo.setCurrentText("contains")
         self.search_input.clear()
-        self.sort_field_combo.setCurrentIndex(0)
-        self.sort_order_combo.setCurrentText("Ascending")
-
-        for line in self._filter_inputs.values():
-            line.blockSignals(True)
-            line.clear()
-            line.blockSignals(False)
 
         self._on_proxy_changed()
 
@@ -754,18 +512,10 @@ class MainWindow(QMainWindow):
                 self.table.setColumnWidth(idx, 360)
 
     def _filter_summary_text(self) -> str:
-        parts = []
         if self.proxy.search_query:
-            parts.append(
-                f"search[{self.proxy.search_field}, {self.proxy.search_mode}]='{self.proxy.search_query}'"
-            )
-
-        active_columns = [
-            f"{name}:{expr}" for name, expr in self.proxy.column_filters.items() if expr.strip()
-        ]
-        if active_columns:
-            parts.append("columns=" + "; ".join(active_columns))
-        return " | ".join(parts) if parts else "none"
+            mode = "app_id + user_id" if "-" in self.proxy.search_query else "user_id"
+            return f"smart-search[{mode}]='{self.proxy.search_query}'"
+        return "none"
 
     def _on_proxy_changed(self) -> None:
         self.proxy.invalidate()
