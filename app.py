@@ -36,11 +36,19 @@ class ExcelData:
 
     REQUIRED_COLUMNS = ["UserID", "AppName", "Payout", "DateTime"]
     RENAME_MAP = {
-        "UserID": "user_id",
+        "UserID": "raw_user",
         "AppName": "app",
         "Payout": "payout",
         "DateTime": "date",
     }
+
+    @staticmethod
+    def _extract_user_parts(raw_user: str) -> tuple[str, str]:
+        raw_user = (raw_user or "").strip()
+        if "-" in raw_user:
+            app_id, user_id = raw_user.split("-", 1)
+            return app_id.strip(), user_id.strip()
+        return "", raw_user
 
     def load(self, path: str) -> pd.DataFrame:
         df = pd.read_excel(path)
@@ -49,9 +57,14 @@ class ExcelData:
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
         df = df[self.REQUIRED_COLUMNS].rename(columns=self.RENAME_MAP).copy()
-        df["user_id"] = df["user_id"].astype(str).str.strip()
-        df["app"] = df["app"].astype(str).str.strip()
-        df["app_id"] = df["app"].astype(str).str.strip()
+
+        parsed_parts = df["raw_user"].astype(str).apply(self._extract_user_parts)
+        df["app_id"] = parsed_parts.str[0].astype(str).str.strip()
+        df["user_id"] = parsed_parts.str[1].astype(str).str.strip()
+
+        fallback_app = df["app"].astype(str).str.strip()
+        df.loc[df["app_id"] == "", "app_id"] = fallback_app[df["app_id"] == ""]
+
         df["payout"] = pd.to_numeric(df["payout"], errors="coerce")
         df["date"] = pd.to_datetime(df["date"], errors="coerce")
 
@@ -65,7 +78,8 @@ class PostbackData:
 
     dataframe: Optional[pd.DataFrame] = None
 
-    def _extract_user_parts(self, raw_user: str) -> tuple[str, str]:
+    @staticmethod
+    def _extract_user_parts(raw_user: str) -> tuple[str, str]:
         raw_user = (raw_user or "").strip()
         if "-" in raw_user:
             app_id, user_id = raw_user.split("-", 1)
@@ -83,17 +97,19 @@ class PostbackData:
         task_name = params.get("task_name", [""])[0]
         status = params.get("status", [""])[0]
         app = params.get("app", [""])[0]
+        advertising_id = params.get("advertising_id", [""])[0]
         app_id, user_id = self._extract_user_parts(raw_user)
 
         return {
-            "app_id": str(app_id),
-            "user_id": str(user_id),
+            "app_id": str(app_id).strip(),
+            "user_id": str(user_id).strip(),
             "payout": pd.to_numeric(payout, errors="coerce"),
             "reward": pd.to_numeric(reward, errors="coerce"),
             "offer_name": unquote(offer_name),
             "task_name": unquote(task_name),
             "status": unquote(status),
             "app": unquote(app),
+            "advertising_id": str(advertising_id).strip(),
         }
 
     def load(self, path: str) -> pd.DataFrame:
@@ -105,6 +121,8 @@ class PostbackData:
         df = pd.concat([df.copy(), parsed_df], axis=1)
         df["user_id"] = df["user_id"].astype(str).str.strip()
         df["app_id"] = df["app_id"].astype(str).str.strip()
+        if "advertising_id" in df.columns:
+            df["advertising_id"] = df["advertising_id"].astype(str).str.strip()
 
         self.dataframe = df
         return df
@@ -169,52 +187,60 @@ class DataModel(QAbstractTableModel):
 class ProxyModel(QSortFilterProxyModel):
     def __init__(self) -> None:
         super().__init__()
-        self.search_query = ""
-        self.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.user_id_query = ""
+        self.app_id_query = "All"
+        self.advertising_id_query = ""
+        self.setFilterCaseSensitivity(Qt.CaseSensitive)
         self.setSortCaseSensitivity(Qt.CaseInsensitive)
         self.setDynamicSortFilter(True)
 
-    def update_search(self, query: str) -> None:
-        self.search_query = query.strip()
+    def update_user_search(self, user_id: str, app_id: str) -> None:
+        self.user_id_query = user_id.strip()
+        self.app_id_query = (app_id or "All").strip()
+        self.advertising_id_query = ""
+        self.invalidateFilter()
+
+    def update_advertising_search(self, advertising_id: str) -> None:
+        self.advertising_id_query = advertising_id.strip()
+        self.user_id_query = ""
+        self.app_id_query = "All"
         self.invalidateFilter()
 
     def clear_filters(self) -> None:
-        self.search_query = ""
+        self.user_id_query = ""
+        self.app_id_query = "All"
+        self.advertising_id_query = ""
         self.invalidateFilter()
 
-    def _get_source_value(self, row: int, column_name: str):
+    def _get_source_value(self, row: int, column_name: str) -> str:
         model = self.sourceModel()
         if not isinstance(model, DataModel) or column_name not in model.dataframe.columns:
-            return None
-        return model.dataframe.iloc[row][column_name]
+            return ""
+        return str(model.dataframe.iloc[row][column_name]).strip()
 
-    def _search_passes(self, row: int) -> bool:
-        if not self.search_query:
-            return True
-
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
+        del source_parent
         model = self.sourceModel()
         if not isinstance(model, DataModel) or model.dataframe.empty:
             return False
 
-        user_id = str(self._get_source_value(row, "user_id") or "").strip()
-        if "user_id" not in model.dataframe.columns:
-            return False
-
-        query = self.search_query.strip()
-        if "-" in query:
-            if "app_id" not in model.dataframe.columns:
+        if self.user_id_query:
+            row_user_id = self._get_source_value(source_row, "user_id")
+            if row_user_id != self.user_id_query:
                 return False
-            app_part, user_part = query.split("-", 1)
-            query_app_id = app_part.strip().lower()
-            query_user_id = user_part.strip()
-            row_app_id = str(self._get_source_value(row, "app_id") or "").strip().lower()
-            return row_app_id == query_app_id and user_id == query_user_id
 
-        return user_id == query
+            if self.app_id_query and self.app_id_query != "All":
+                row_app_id = self._get_source_value(source_row, "app_id")
+                return row_app_id == self.app_id_query
+            return True
 
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:  # noqa: N802
-        del source_parent
-        return self._search_passes(source_row)
+        if self.advertising_id_query:
+            if "advertising_id" not in model.dataframe.columns:
+                return False
+            row_advertising_id = self._get_source_value(source_row, "advertising_id")
+            return row_advertising_id == self.advertising_id_query
+
+        return True
 
 
 class DataTableView(QTableView):
@@ -224,7 +250,7 @@ class DataTableView(QTableView):
         self.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.setSelectionMode(QAbstractItemView.SingleSelection)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.setSortingEnabled(True)
+        self.setSortingEnabled(False)
         self.setWordWrap(False)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
@@ -267,7 +293,8 @@ class MainWindow(QMainWindow):
         root.setSpacing(12)
 
         root.addWidget(self.create_top_bar())
-        root.addWidget(self.create_search_bar())
+        root.addWidget(self.create_user_search_section())
+        root.addWidget(self.create_advertising_search_section())
         root.addWidget(self.create_table(), 1)
         root.addWidget(self.create_footer())
 
@@ -298,29 +325,50 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.load_button)
         return frame
 
-    def create_search_bar(self) -> QFrame:
+    def create_user_search_section(self) -> QFrame:
         frame = QFrame()
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(10)
 
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search by user_id (e.g. 256772) or app_id-user_id (e.g. stgplus-256772)")
-        self.search_input.returnPressed.connect(self.apply_search)
+        layout.addWidget(QLabel("User ID"))
+        self.user_id_input = QLineEdit()
+        self.user_id_input.setPlaceholderText("Enter user_id (e.g. 97344)")
+        self.user_id_input.returnPressed.connect(self.apply_user_search)
 
-        self.search_button = QPushButton("Search")
-        self.search_button.setProperty("kind", "primary")
-        self.search_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
-        self.search_button.clicked.connect(self.apply_search)
+        layout.addWidget(self.user_id_input, 2)
 
-        self.reset_button = QPushButton("Reset")
-        self.reset_button.setProperty("kind", "secondary")
-        self.reset_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
-        self.reset_button.clicked.connect(self.reset_all_filters)
+        layout.addWidget(QLabel("App"))
+        self.app_selector = QComboBox()
+        self.app_selector.addItem("All")
+        layout.addWidget(self.app_selector, 1)
 
-        layout.addWidget(self.search_input, 4)
-        layout.addWidget(self.search_button)
-        layout.addWidget(self.reset_button)
+        self.user_search_button = QPushButton("Search")
+        self.user_search_button.setProperty("kind", "primary")
+        self.user_search_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
+        self.user_search_button.clicked.connect(self.apply_user_search)
+        layout.addWidget(self.user_search_button)
+
+        return frame
+
+    def create_advertising_search_section(self) -> QFrame:
+        frame = QFrame()
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel("Advertising ID"))
+        self.advertising_id_input = QLineEdit()
+        self.advertising_id_input.setPlaceholderText("Enter advertising_id")
+        self.advertising_id_input.returnPressed.connect(self.apply_advertising_search)
+        layout.addWidget(self.advertising_id_input, 3)
+
+        self.advertising_search_button = QPushButton("Search")
+        self.advertising_search_button.setProperty("kind", "primary")
+        self.advertising_search_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
+        self.advertising_search_button.clicked.connect(self.apply_advertising_search)
+        layout.addWidget(self.advertising_search_button)
+
         return frame
 
     def create_table(self) -> QFrame:
@@ -331,7 +379,6 @@ class MainWindow(QMainWindow):
         self.table = DataTableView()
         self.table.setModel(self.proxy)
         self.table.selectionModel().selectionChanged.connect(self._update_status)
-        self.table.horizontalHeader().sectionClicked.connect(self._autosize_columns)
 
         layout.addWidget(self.table)
         return frame
@@ -394,11 +441,6 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
             QPushButton[kind="primary"]:hover { background-color: #1d4ed8; }
-            QPushButton[kind="secondary"] {
-                background-color: #e9edf5;
-                color: #0f172a;
-            }
-            QPushButton[kind="secondary"]:hover { background-color: #dde5f1; }
             QPushButton:disabled {
                 background-color: #cbd5e1;
                 color: #64748b;
@@ -434,11 +476,22 @@ class MainWindow(QMainWindow):
 
     def _set_loading_state(self, is_loading: bool) -> None:
         self.load_button.setDisabled(is_loading)
-        self.search_button.setDisabled(is_loading)
-        self.reset_button.setDisabled(is_loading)
+        self.user_search_button.setDisabled(is_loading)
+        self.advertising_search_button.setDisabled(is_loading)
         self.mode_combo.setDisabled(is_loading)
+        self.app_selector.setDisabled(is_loading)
         self.status_label.setText("Loading file..." if is_loading else "Ready")
         QApplication.setOverrideCursor(Qt.WaitCursor) if is_loading else QApplication.restoreOverrideCursor()
+
+    def _populate_app_selector(self, df: pd.DataFrame) -> None:
+        self.app_selector.clear()
+        self.app_selector.addItem("All")
+
+        if "app_id" not in df.columns:
+            return
+
+        unique_apps = sorted({str(value).strip() for value in df["app_id"] if str(value).strip()})
+        self.app_selector.addItems(unique_apps)
 
     def load_file(self) -> None:
         mode = self.mode_combo.currentText()
@@ -474,7 +527,9 @@ class MainWindow(QMainWindow):
             df = self.excel_data.load(file_path) if mode == "My Chips" else self.postback_data.load(file_path)
             self.model.set_dataframe(df.reset_index(drop=True))
             self.proxy.clear_filters()
-            self.search_input.clear()
+            self.user_id_input.clear()
+            self.advertising_id_input.clear()
+            self._populate_app_selector(df)
 
             self._autosize_columns()
             self._on_proxy_changed()
@@ -486,21 +541,38 @@ class MainWindow(QMainWindow):
             loading.close()
             self._set_loading_state(False)
 
-    def apply_search(self) -> None:
+    def apply_user_search(self) -> None:
         if self.model.dataframe.empty:
             self.show_error("Please load a file first.")
             return
 
-        self.proxy.update_search(self.search_input.text())
-        self._on_proxy_changed()
-
-    def reset_all_filters(self) -> None:
-        if self.model.dataframe.empty:
+        user_id = self.user_id_input.text().strip()
+        if not user_id:
+            self.show_error("Please enter a user_id.")
             return
 
-        self.proxy.clear_filters()
-        self.search_input.clear()
+        selected_app = self.app_selector.currentText()
+        self.advertising_id_input.clear()
+        self.proxy.update_user_search(user_id=user_id, app_id=selected_app)
+        self._on_proxy_changed()
 
+    def apply_advertising_search(self) -> None:
+        if self.model.dataframe.empty:
+            self.show_error("Please load a file first.")
+            return
+
+        if "advertising_id" not in self.model.dataframe.columns:
+            self.show_error("The loaded file does not contain an 'advertising_id' column.")
+            return
+
+        advertising_id = self.advertising_id_input.text().strip()
+        if not advertising_id:
+            self.show_error("Please enter an advertising_id.")
+            return
+
+        self.user_id_input.clear()
+        self.app_selector.setCurrentText("All")
+        self.proxy.update_advertising_search(advertising_id)
         self._on_proxy_changed()
 
     def _autosize_columns(self) -> None:
@@ -512,9 +584,14 @@ class MainWindow(QMainWindow):
                 self.table.setColumnWidth(idx, 360)
 
     def _filter_summary_text(self) -> str:
-        if self.proxy.search_query:
-            mode = "app_id + user_id" if "-" in self.proxy.search_query else "user_id"
-            return f"smart-search[{mode}]='{self.proxy.search_query}'"
+        if self.proxy.user_id_query:
+            if self.proxy.app_id_query == "All":
+                return f"user_id='{self.proxy.user_id_query}'"
+            return f"user_id='{self.proxy.user_id_query}' AND app_id='{self.proxy.app_id_query}'"
+
+        if self.proxy.advertising_id_query:
+            return f"advertising_id='{self.proxy.advertising_id_query}'"
+
         return "none"
 
     def _on_proxy_changed(self) -> None:
