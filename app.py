@@ -6,28 +6,28 @@ from typing import Dict, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 import pandas as pd
-from PyQt5.QtCore import QAbstractTableModel, QSortFilterProxyModel, Qt, QModelIndex
+from PyQt5.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QFileDialog,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressDialog,
     QPushButton,
+    QShortcut,
+    QStyle,
     QTableView,
     QVBoxLayout,
     QWidget,
-    QAbstractItemView,
-    QHeaderView,
-    QShortcut,
 )
 
 
@@ -353,9 +353,11 @@ class DataTableView(QTableView):
         self.setWordWrap(False)
         self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.horizontalHeader().setStretchLastSection(False)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        self.setShowGrid(False)
+        self.horizontalHeader().setStretchLastSection(True)
+        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.verticalHeader().setVisible(False)
+        self.verticalHeader().setDefaultSectionSize(34)
 
     def copy_selected_cell(self) -> None:
         index = self.currentIndex()
@@ -370,8 +372,8 @@ class MainWindow(QMainWindow):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Professional Data Analysis Tool")
-        self.resize(1400, 840)
+        self.setWindowTitle("User Inspector")
+        self.resize(1460, 900)
 
         self.excel_data = ExcelData()
         self.postback_data = PostbackData()
@@ -390,147 +392,230 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         root = QVBoxLayout(central)
-        root.setContentsMargins(18, 18, 18, 18)
+        root.setContentsMargins(20, 18, 20, 18)
         root.setSpacing(12)
 
-        top_bar = QHBoxLayout()
-        top_bar.setSpacing(10)
+        root.addWidget(self.create_top_bar())
+        root.addWidget(self.create_search_bar())
+        root.addWidget(self.create_filter_bar())
+        root.addWidget(self.create_table(), 1)
+        root.addWidget(self.create_footer())
+
+        copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
+        copy_shortcut.activated.connect(self.table.copy_selected_cell)
+
+    def create_top_bar(self) -> QFrame:
+        frame = QFrame()
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        self.app_title = QLabel("User Inspector")
+        self.app_title.setObjectName("AppTitle")
 
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["My Chips", "Prime"])
 
         self.load_button = QPushButton("Load File")
+        self.load_button.setProperty("kind", "primary")
+        self.load_button.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
         self.load_button.clicked.connect(self.load_file)
 
-        top_bar.addWidget(QLabel("Mode"))
-        top_bar.addWidget(self.mode_combo)
-        top_bar.addStretch()
-        top_bar.addWidget(self.load_button)
+        layout.addWidget(self.app_title)
+        layout.addStretch()
+        layout.addWidget(QLabel("Mode"))
+        layout.addWidget(self.mode_combo)
+        layout.addWidget(self.load_button)
+        return frame
 
-        search_group = QGroupBox("Advanced Search")
-        search_layout = QHBoxLayout(search_group)
-        search_layout.setSpacing(10)
-
-        self.search_field_combo = QComboBox()
-        self.search_field_combo.addItems([
-            "global",
-            "user_id",
-            "offer_name",
-            "task_name",
-            "app",
-        ])
+    def create_search_bar(self) -> QFrame:
+        frame = QFrame()
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search value")
+        self.search_input.setPlaceholderText("Search records...")
+        self.search_input.returnPressed.connect(self.apply_search)
 
         self.search_mode_combo = QComboBox()
         self.search_mode_combo.addItems(["contains", "exact", "starts_with"])
 
+        self.search_field_combo = QComboBox()
+        self.search_field_combo.addItems(self.SEARCH_FIELDS)
+
         self.search_button = QPushButton("Search")
+        self.search_button.setProperty("kind", "primary")
+        self.search_button.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
         self.search_button.clicked.connect(self.apply_search)
 
         self.reset_button = QPushButton("Reset")
+        self.reset_button.setProperty("kind", "secondary")
+        self.reset_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self.reset_button.clicked.connect(self.reset_all_filters)
 
-        search_layout.addWidget(QLabel("Field"))
-        search_layout.addWidget(self.search_field_combo)
-        search_layout.addWidget(QLabel("Query"))
-        search_layout.addWidget(self.search_input, 1)
-        search_layout.addWidget(QLabel("Mode"))
-        search_layout.addWidget(self.search_mode_combo)
-        search_layout.addWidget(self.search_button)
-        search_layout.addWidget(self.reset_button)
+        layout.addWidget(self.search_input, 4)
+        layout.addWidget(self.search_mode_combo, 1)
+        layout.addWidget(self.search_field_combo, 1)
+        layout.addWidget(self.search_button)
+        layout.addWidget(self.reset_button)
+        return frame
 
-        filter_group = QGroupBox("Column Filters")
-        self.filter_form = QFormLayout(filter_group)
-        self.filter_form.setHorizontalSpacing(10)
+    def create_filter_bar(self) -> QFrame:
+        frame = QFrame()
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(8)
+
+        controls = QHBoxLayout()
+        controls.setSpacing(10)
+
+        self.sort_field_combo = QComboBox()
+        self.sort_field_combo.addItem("(none)")
+
+        self.sort_order_combo = QComboBox()
+        self.sort_order_combo.addItems(["Ascending", "Descending"])
+
+        self.sort_button = QPushButton("Apply Sort")
+        self.sort_button.setProperty("kind", "secondary")
+        self.sort_button.clicked.connect(self.apply_sort)
+
+        controls.addWidget(QLabel("Sort by"))
+        controls.addWidget(self.sort_field_combo, 2)
+        controls.addWidget(self.sort_order_combo, 1)
+        controls.addWidget(self.sort_button)
+        controls.addStretch()
+
+        self.filter_form = QFormLayout()
+        self.filter_form.setHorizontalSpacing(12)
         self.filter_form.setVerticalSpacing(8)
         self.filter_form.addRow(
-            QLabel("Load a file to enable per-column filters.\n"
-                   "Text: contains or 'exact:value' | Numeric: >0.5, <=3, 1..4 | Date: >=2025-01-01, 2025-01-01..2025-01-31")
+            QLabel(
+                "Load a file to enable per-column filters. "
+                "Text: contains or exact:value | Numeric: >0.5, <=3, 1..4 | Date: >=2025-01-01, 2025-01-01..2025-01-31"
+            )
         )
 
-        table_frame = QFrame()
-        table_layout = QVBoxLayout(table_frame)
-        table_layout.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(controls)
+        outer.addLayout(self.filter_form)
+        return frame
+
+    def create_table(self) -> QFrame:
+        frame = QFrame()
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         self.table = DataTableView()
         self.table.setModel(self.proxy)
         self.table.selectionModel().selectionChanged.connect(self._update_status)
         self.table.horizontalHeader().sectionClicked.connect(self._autosize_columns)
 
+        layout.addWidget(self.table)
+        return frame
+
+    def create_footer(self) -> QFrame:
+        frame = QFrame()
+        layout = QHBoxLayout(frame)
+        layout.setContentsMargins(12, 8, 12, 8)
+
         self.row_count_label = QLabel("Rows: 0")
+        self.filter_summary_label = QLabel("Filters: none")
         self.status_label = QLabel("Ready")
 
-        footer = QHBoxLayout()
-        footer.addWidget(self.row_count_label)
-        footer.addStretch()
-        footer.addWidget(self.status_label)
-
-        table_layout.addWidget(self.table)
-        table_layout.addLayout(footer)
-
-        root.addLayout(top_bar)
-        root.addWidget(search_group)
-        root.addWidget(filter_group)
-        root.addWidget(table_frame, 1)
-
-        copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
-        copy_shortcut.activated.connect(self.table.copy_selected_cell)
+        layout.addWidget(self.row_count_label)
+        layout.addSpacing(18)
+        layout.addWidget(self.filter_summary_label, 1)
+        layout.addWidget(self.status_label, 1, Qt.AlignRight)
+        return frame
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
             """
-            QMainWindow { background-color: #f5f7fb; }
-            QLabel { color: #2f3542; font-size: 12px; }
-            QGroupBox {
-                border: 1px solid #dde3ee;
-                border-radius: 8px;
-                margin-top: 8px;
-                padding: 10px;
+            QMainWindow { background-color: #f3f6fb; }
+
+            QFrame {
                 background: #ffffff;
-                font-weight: 600;
+                border: 1px solid #e4e9f2;
+                border-radius: 12px;
             }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 6px; }
+
+            QLabel { color: #334155; font-size: 13px; }
+            QLabel#AppTitle {
+                font-size: 20px;
+                font-weight: 700;
+                color: #0f172a;
+                border: none;
+            }
+
             QLineEdit, QComboBox {
-                border: 1px solid #ced6e0;
-                border-radius: 6px;
+                border: 1px solid #d5ddea;
+                border-radius: 10px;
                 background: #ffffff;
-                min-height: 30px;
-                padding: 4px 8px;
+                min-height: 34px;
+                padding: 4px 10px;
+                color: #0f172a;
             }
+            QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #3b82f6;
+            }
+
             QPushButton {
                 border: none;
-                border-radius: 6px;
-                background-color: #2f80ed;
+                border-radius: 10px;
+                min-height: 36px;
+                padding: 4px 14px;
+                font-weight: 600;
+            }
+            QPushButton[kind="primary"] {
+                background-color: #2563eb;
                 color: #ffffff;
-                font-weight: 600;
-                min-height: 30px;
-                padding: 4px 12px;
             }
-            QPushButton:hover { background-color: #1d6fd1; }
+            QPushButton[kind="primary"]:hover { background-color: #1d4ed8; }
+            QPushButton[kind="secondary"] {
+                background-color: #e9edf5;
+                color: #0f172a;
+            }
+            QPushButton[kind="secondary"]:hover { background-color: #dde5f1; }
+            QPushButton:disabled {
+                background-color: #cbd5e1;
+                color: #64748b;
+            }
+
             QTableView {
-                border: 1px solid #dde3ee;
-                border-radius: 8px;
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
                 background: #ffffff;
-                gridline-color: #edf1f7;
-                selection-background-color: #d7ebff;
-                selection-color: #0d1b2a;
-                alternate-background-color: #f8fbff;
+                alternate-background-color: #f8fafc;
+                selection-background-color: #dbeafe;
+                selection-color: #1e293b;
+                gridline-color: #eff4fa;
+                outline: 0;
             }
+            QTableView::item { padding: 8px; border: none; }
+            QTableView::item:hover { background-color: #edf4ff; }
+
             QHeaderView::section {
-                background-color: #eef3fa;
+                background-color: #f1f5f9;
+                color: #334155;
                 border: 0;
-                border-right: 1px solid #d9e0ec;
-                border-bottom: 1px solid #d9e0ec;
-                padding: 6px;
-                font-weight: 600;
+                border-bottom: 1px solid #dbe2ee;
+                padding: 8px;
+                font-size: 12px;
+                font-weight: 700;
             }
             """
         )
 
     def show_error(self, message: str) -> None:
         QMessageBox.critical(self, "Error", message)
+
+    def _set_loading_state(self, is_loading: bool) -> None:
+        self.load_button.setDisabled(is_loading)
+        self.search_button.setDisabled(is_loading)
+        self.reset_button.setDisabled(is_loading)
+        self.mode_combo.setDisabled(is_loading)
+        self.status_label.setText("Loading file..." if is_loading else "Ready")
+        QApplication.setOverrideCursor(Qt.WaitCursor) if is_loading else QApplication.restoreOverrideCursor()
 
     def _clear_filter_rows(self) -> None:
         while self.filter_form.rowCount() > 0:
@@ -539,10 +624,14 @@ class MainWindow(QMainWindow):
 
     def _build_filter_rows(self, columns) -> None:
         self._clear_filter_rows()
+        self.sort_field_combo.clear()
+        self.sort_field_combo.addItem("(none)")
+
         if not columns:
             self.filter_form.addRow(QLabel("No columns available."))
             return
 
+        self.sort_field_combo.addItems(columns)
         for col in columns:
             line_edit = QLineEdit()
             lower = col.lower()
@@ -581,19 +670,17 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
-        loading = QProgressDialog("Loading file...", None, 0, 0, self)
-        loading.setWindowTitle("Please wait")
+        loading = QProgressDialog("Processing file...", None, 0, 0, self)
+        loading.setWindowTitle("Loading")
         loading.setWindowModality(Qt.WindowModal)
         loading.setCancelButton(None)
         loading.show()
+
+        self._set_loading_state(True)
         QApplication.processEvents()
 
         try:
-            if mode == "My Chips":
-                df = self.excel_data.load(file_path)
-            else:
-                df = self.postback_data.load(file_path)
-
+            df = self.excel_data.load(file_path) if mode == "My Chips" else self.postback_data.load(file_path)
             self.model.set_dataframe(df.reset_index(drop=True))
             self.proxy.clear_filters()
             self.search_field_combo.setCurrentText("global")
@@ -603,12 +690,13 @@ class MainWindow(QMainWindow):
             self._build_filter_rows(list(df.columns))
             self._autosize_columns()
             self._on_proxy_changed()
-            self.status_label.setText(f"Loaded: {file_path}")
+            self.status_label.setText(f"Loaded {len(df)} rows")
 
         except Exception as exc:
             self.show_error(str(exc))
         finally:
             loading.close()
+            self._set_loading_state(False)
 
     def apply_search(self) -> None:
         if self.model.dataframe.empty:
@@ -622,6 +710,23 @@ class MainWindow(QMainWindow):
         )
         self._on_proxy_changed()
 
+    def apply_sort(self) -> None:
+        if self.model.dataframe.empty:
+            return
+
+        field = self.sort_field_combo.currentText()
+        if field == "(none)":
+            self.table.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
+            return
+
+        source_columns = list(self.model.dataframe.columns)
+        if field not in source_columns:
+            return
+
+        column_index = source_columns.index(field)
+        order = Qt.AscendingOrder if self.sort_order_combo.currentText() == "Ascending" else Qt.DescendingOrder
+        self.table.sortByColumn(column_index, order)
+
     def reset_all_filters(self) -> None:
         if self.model.dataframe.empty:
             return
@@ -630,10 +735,14 @@ class MainWindow(QMainWindow):
         self.search_field_combo.setCurrentText("global")
         self.search_mode_combo.setCurrentText("contains")
         self.search_input.clear()
+        self.sort_field_combo.setCurrentIndex(0)
+        self.sort_order_combo.setCurrentText("Ascending")
+
         for line in self._filter_inputs.values():
             line.blockSignals(True)
             line.clear()
             line.blockSignals(False)
+
         self._on_proxy_changed()
 
     def _autosize_columns(self) -> None:
@@ -644,9 +753,24 @@ class MainWindow(QMainWindow):
             if self.table.columnWidth(idx) > 360:
                 self.table.setColumnWidth(idx, 360)
 
+    def _filter_summary_text(self) -> str:
+        parts = []
+        if self.proxy.search_query:
+            parts.append(
+                f"search[{self.proxy.search_field}, {self.proxy.search_mode}]='{self.proxy.search_query}'"
+            )
+
+        active_columns = [
+            f"{name}:{expr}" for name, expr in self.proxy.column_filters.items() if expr.strip()
+        ]
+        if active_columns:
+            parts.append("columns=" + "; ".join(active_columns))
+        return " | ".join(parts) if parts else "none"
+
     def _on_proxy_changed(self) -> None:
         self.proxy.invalidate()
         self.row_count_label.setText(f"Rows: {self.proxy.rowCount()}")
+        self.filter_summary_label.setText(f"Filters: {self._filter_summary_text()}")
 
     def _update_status(self) -> None:
         index = self.table.currentIndex()
