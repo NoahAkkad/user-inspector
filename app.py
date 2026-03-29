@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -24,6 +25,7 @@ from PyQt5.QtWidgets import (
     QShortcut,
     QStyle,
     QTableView,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -94,22 +96,31 @@ class UIColors:
     SUCCESS = "#28a745"
     WARNING = "#ffc107"
     ERROR = "#dc3545"
+    INFO = "#17a2b8"
 
 
 ALL_APPS_FILTER = "All Apps"
 
 ERROR_MESSAGES = {
-    "FILE_NOT_LOADED": "Please load a file first.",
+    "FILE_NOT_LOADED": "Load a file to begin.",
     "USER_ID_REQUIRED": "Please enter a user ID.",
     "ADVERTISING_ID_NOT_FOUND": "The loaded file does not contain an advertising ID column.",
     "ADVERTISING_ID_REQUIRED": "Please enter an advertising ID.",
     "MISSING_COLUMNS": "Missing required columns: {columns}",
-    "NO_RESULTS": "No records found for the selected criteria.",
+    "NO_RESULTS": "No records found matching your search.",
+    "INVALID_FILE": "Unable to read file. Please check the file format.",
 }
 
 PLACEHOLDER_TEXTS = {
-    "USER_ID": "e.g., 264195, user123",
+    "USER_ID": "e.g., 264195 or user123",
     "ADVERTISING_ID": "e.g., ad_12345",
+}
+
+TOOLTIPS = {
+    "LOAD_FILE": "Load Excel or CSV file",
+    "SEARCH": "Search records (Enter)",
+    "RESET": "Show all data (Esc)",
+    "SEARCH_AD": "Search by advertising ID (Enter)",
 }
 
 # ============================================================================
@@ -373,7 +384,6 @@ class DataTableView(QTableView):
         self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
         self.setShowGrid(True)
-        self.setColumnHidden(0, False)
 
         # Configure header
         header = self.horizontalHeader()
@@ -386,12 +396,24 @@ class DataTableView(QTableView):
         self.verticalHeader().setVisible(False)
         self.verticalHeader().setDefaultSectionSize(UIConstants.ROW_HEIGHT)
 
+        # Double-click row signal
+        self.doubleClicked.connect(self._on_row_double_click)
+
     def copy_selected_cell(self) -> None:
         index = self.currentIndex()
         if not index.isValid():
             return
         text = index.data(Qt.DisplayRole) or ""
         QApplication.clipboard().setText(str(text))
+
+    def _on_row_double_click(self, index: QModelIndex) -> None:
+        """Handle double-click on table row."""
+        if not index.isValid() or not hasattr(self, 'parent') or not self.parent():
+            return
+        # Emit signal that main window can subscribe to
+        self.row_double_clicked.emit(index)
+
+    row_double_clicked = None  # Will be connected in main window
 
 
 # ============================================================================
@@ -400,26 +422,39 @@ class DataTableView(QTableView):
 
 
 class MainWindow(QMainWindow):
-    """Professional data analysis tool with clean, intuitive UI."""
+    """Professional data analysis tool with production-level UX."""
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("User Inspector")
         self.resize(UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
 
+        # Initialize data loaders
         self.excel_data = ExcelData()
         self.postback_data = PostbackData()
 
+        # Initialize models
         self.model = DataModel()
         self.proxy = SortFilterProxyModel()
         self.proxy.setSourceModel(self.model)
 
+        # Data storage
         self.original_df = pd.DataFrame()
+        self.is_file_loaded = False
 
+        # Initialize UI - create all elements ONCE
         self._build_ui()
         self._apply_styles()
+        self._setup_shortcuts()
+        self._setup_empty_state()
+
+    def _setup_empty_state(self) -> None:
+        """Setup initial empty state."""
+        self.is_file_loaded = False
+        self._update_status_message()
 
     def _build_ui(self) -> None:
+        """Build the entire UI (called ONCE during init)."""
         central = QWidget()
         self.setCentralWidget(central)
 
@@ -427,47 +462,40 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(*UIConstants.ROOT_MARGINS)
         root.setSpacing(14)
 
-        # Build sections
-        root.addWidget(self._build_top_bar(), 0)
-        root.addWidget(self._build_search_section(), 0)
-        root.addWidget(self._build_table(), 1)
-        root.addWidget(self._build_footer(), 0)
+        # Build all sections
+        root.addLayout(self._build_top_bar_layout(), 0)
+        root.addLayout(self._build_search_layout(), 0)
+        root.addWidget(self._build_table_frame(), 1)
+        root.addLayout(self._build_footer_layout(), 0)
 
-        # Copy shortcut
+        # Setup copy shortcut
         copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
         copy_shortcut.activated.connect(self.table.copy_selected_cell)
 
-    def _create_section_frame(self) -> tuple[QFrame, QHBoxLayout]:
-        """Create a styled section frame with horizontal layout."""
-        frame = QFrame()
-        frame.setObjectName("SectionFrame")
-        layout = QHBoxLayout(frame)
+    def _build_top_bar_layout(self) -> QHBoxLayout:
+        """Build top navigation bar layout."""
+        layout = QHBoxLayout()
         layout.setContentsMargins(*UIConstants.SECTION_MARGINS)
         layout.setSpacing(UIConstants.SECTION_SPACING)
-        return frame, layout
-
-    def _build_top_bar(self) -> QFrame:
-        """Build the top navigation bar."""
-        frame, layout = self._create_section_frame()
 
         # App title
         title = QLabel("User Inspector")
         title.setObjectName("AppTitle")
-        title.setProperty("size", "large")
 
         # Mode selector
         mode_label = QLabel("Source:")
         mode_label.setProperty("weight", "bold")
+
         self.mode_combo = QComboBox()
         self.mode_combo.addItems([mode.value for mode in FileSourceMode])
         self.mode_combo.setMinimumWidth(120)
         self.mode_combo.setMaximumWidth(150)
 
-        # Load button
-        self.load_button = QPushButton("📁 Load File")
+        # Load file button
+        self.load_button = QPushButton("Load File")
         self.load_button.setProperty("kind", "primary")
         self.load_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.load_button.setToolTip("Load a new data file")
+        self.load_button.setToolTip(TOOLTIPS["LOAD_FILE"] + " (Ctrl+O)")
         self.load_button.clicked.connect(self.load_file)
 
         layout.addWidget(title)
@@ -477,21 +505,18 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         layout.addWidget(self.load_button)
 
-        return frame
+        return layout
 
-    def _build_search_section(self) -> QFrame:
-        """Build the search and filter panel."""
-        frame = QFrame()
-        frame.setObjectName("SearchSection")
-        main_layout = QVBoxLayout(frame)
-        main_layout.setContentsMargins(*UIConstants.SECTION_MARGINS)
-        main_layout.setSpacing(10)
+    def _build_search_layout(self) -> QVBoxLayout:
+        """Build search and filter panel layout."""
+        layout = QVBoxLayout()
+        layout.setContentsMargins(*UIConstants.SECTION_MARGINS)
+        layout.setSpacing(10)
 
-        # User ID search row
-        user_row, user_layout = self._create_section_frame()
-        user_row.setObjectName("SearchRow")
+        # ========== User ID Search Row ==========
+        user_row = QHBoxLayout()
+        user_row.setSpacing(UIConstants.SECTION_SPACING)
 
-        # User ID section
         user_label = QLabel("Search by User ID:")
         user_label.setProperty("weight", "bold")
         user_label.setMinimumWidth(120)
@@ -501,37 +526,35 @@ class MainWindow(QMainWindow):
         self.user_id_input.setMinimumHeight(UIConstants.INPUT_HEIGHT)
         self.user_id_input.returnPressed.connect(self.apply_user_search)
 
-        # App filter
         app_label = QLabel("Filter by App:")
         app_label.setProperty("weight", "bold")
+
         self.app_selector = QComboBox()
         self.app_selector.addItem(ALL_APPS_FILTER)
         self.app_selector.setMinimumHeight(UIConstants.INPUT_HEIGHT)
 
-        # Search button
-        self.user_search_button = QPushButton("🔍 Search")
+        self.user_search_button = QPushButton("Search")
         self.user_search_button.setProperty("kind", "primary")
         self.user_search_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.user_search_button.setToolTip("Search for user records")
+        self.user_search_button.setToolTip(TOOLTIPS["SEARCH"])
         self.user_search_button.clicked.connect(self.apply_user_search)
 
-        # Reset button
-        self.reset_button = QPushButton("↺ Reset")
+        self.reset_button = QPushButton("Reset")
         self.reset_button.setProperty("kind", "secondary")
         self.reset_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.reset_button.setToolTip("Show all records")
+        self.reset_button.setToolTip(TOOLTIPS["RESET"] + " (Esc)")
         self.reset_button.clicked.connect(self.reset_view)
 
-        user_layout.addWidget(user_label)
-        user_layout.addWidget(self.user_id_input, 2)
-        user_layout.addWidget(app_label)
-        user_layout.addWidget(self.app_selector, 1)
-        user_layout.addWidget(self.user_search_button)
-        user_layout.addWidget(self.reset_button)
+        user_row.addWidget(user_label)
+        user_row.addWidget(self.user_id_input, 2)
+        user_row.addWidget(app_label)
+        user_row.addWidget(self.app_selector, 1)
+        user_row.addWidget(self.user_search_button)
+        user_row.addWidget(self.reset_button)
 
-        # Advertising ID search row (secondary)
-        ad_row, ad_layout = self._create_section_frame()
-        ad_row.setObjectName("SecondarySearchRow")
+        # ========== Advertising ID Search Row ==========
+        ad_row = QHBoxLayout()
+        ad_row.setSpacing(UIConstants.SECTION_SPACING)
 
         ad_label = QLabel("Search by Advertising ID:")
         ad_label.setProperty("weight", "bold")
@@ -542,24 +565,24 @@ class MainWindow(QMainWindow):
         self.advertising_id_input.setMinimumHeight(UIConstants.INPUT_HEIGHT)
         self.advertising_id_input.returnPressed.connect(self.apply_advertising_search)
 
-        self.advertising_search_button = QPushButton("🔍 Search")
+        self.advertising_search_button = QPushButton("Search")
         self.advertising_search_button.setProperty("kind", "primary")
         self.advertising_search_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.advertising_search_button.setToolTip("Search by advertising ID")
+        self.advertising_search_button.setToolTip(TOOLTIPS["SEARCH_AD"])
         self.advertising_search_button.clicked.connect(self.apply_advertising_search)
 
-        ad_layout.addWidget(ad_label)
-        ad_layout.addWidget(self.advertising_id_input, 3)
-        ad_layout.addWidget(self.advertising_search_button)
-        ad_layout.addStretch()
+        ad_row.addWidget(ad_label)
+        ad_row.addWidget(self.advertising_id_input, 3)
+        ad_row.addWidget(self.advertising_search_button)
+        ad_row.addStretch()
 
-        main_layout.addLayout(user_layout)
-        main_layout.addLayout(ad_layout)
+        layout.addLayout(user_row)
+        layout.addLayout(ad_row)
 
-        return frame
+        return layout
 
-    def _build_table(self) -> QFrame:
-        """Build the main data table."""
+    def _build_table_frame(self) -> QFrame:
+        """Build the main table frame."""
         frame = QFrame()
         frame.setObjectName("TableFrame")
         layout = QVBoxLayout(frame)
@@ -573,54 +596,51 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table)
         return frame
 
-    def _build_footer(self) -> QFrame:
-        """Build the footer with status information."""
-        frame, layout = self._create_section_frame()
-        frame.setObjectName("FooterFrame")
+    def _build_footer_layout(self) -> QHBoxLayout:
+        """Build the footer status bar layout."""
+        layout = QHBoxLayout()
+        layout.setContentsMargins(*UIConstants.FOOTER_MARGINS)
+        layout.setSpacing(UIConstants.SECTION_SPACING)
 
-        # Row count
-        self.row_count_label = QLabel("Records: 0")
+        self.row_count_label = QLabel("Ready")
         self.row_count_label.setProperty("weight", "bold")
 
-        # Filter summary
-        self.filter_summary_label = QLabel("Filters: none")
+        self.filter_summary_label = QLabel("Load a file to begin")
+        self.filter_summary_label.setProperty("style", "info")
 
-        # Status indicator
-        self.status_label = QLabel("Ready")
+        self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.status_label.setProperty("weight", "bold")
 
         layout.addWidget(self.row_count_label)
         layout.addSpacing(20)
         layout.addWidget(self.filter_summary_label, 1)
         layout.addWidget(self.status_label)
 
-        return frame
+        return layout
+
+    def _setup_shortcuts(self) -> None:
+        """Setup keyboard shortcuts."""
+        # Ctrl+O to load file
+        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self.load_file)
+        # Esc to reset
+        QShortcut(QKeySequence("Escape"), self).activated.connect(self.reset_view)
 
     def _apply_styles(self) -> None:
-        """Apply comprehensive styling to all UI elements."""
+        """Apply comprehensive styling."""
         stylesheet = f"""
             QMainWindow {{
                 background-color: {UIColors.BG_MAIN};
             }}
 
-            /* Section Frames */
-            #SectionFrame, #SearchRow, #SecondarySearchRow, #TableFrame, #FooterFrame {{
+            QFrame {{
                 background: {UIColors.BG_CARD};
                 border: 1px solid {UIColors.BORDER_LIGHT};
                 border-radius: 8px;
             }}
 
-            /* Typography */
             QLabel {{
                 color: {UIColors.TEXT_SECONDARY};
                 font-size: 12px;
-            }}
-
-            QLabel[size="large"] {{
-                font-size: 20px;
-                font-weight: 600;
-                color: {UIColors.TEXT_PRIMARY};
             }}
 
             QLabel[weight="bold"] {{
@@ -628,7 +648,17 @@ class MainWindow(QMainWindow):
                 color: {UIColors.TEXT_PRIMARY};
             }}
 
-            /* Inputs */
+            QLabel[style="info"] {{
+                color: {UIColors.INFO};
+                font-weight: 500;
+            }}
+
+            QLabel#AppTitle {{
+                font-size: 20px;
+                font-weight: 600;
+                color: {UIColors.TEXT_PRIMARY};
+            }}
+
             QLineEdit, QComboBox {{
                 background: {UIColors.BG_CARD};
                 color: {UIColors.TEXT_PRIMARY};
@@ -649,7 +679,6 @@ class MainWindow(QMainWindow):
                 background-color: #fafbff;
             }}
 
-            /* Primary Buttons */
             QPushButton[kind="primary"] {{
                 background-color: {UIColors.PRIMARY_BUTTON};
                 color: white;
@@ -668,7 +697,6 @@ class MainWindow(QMainWindow):
                 background-color: {UIColors.PRIMARY_BUTTON_ACTIVE};
             }}
 
-            /* Secondary Buttons */
             QPushButton[kind="secondary"] {{
                 background-color: {UIColors.SECONDARY_BUTTON};
                 color: {UIColors.SECONDARY_BUTTON_TEXT};
@@ -684,14 +712,12 @@ class MainWindow(QMainWindow):
                 border: 1px solid #adb5bd;
             }}
 
-            /* Disabled Buttons */
             QPushButton:disabled {{
                 background-color: {UIColors.DISABLED_BG};
                 color: {UIColors.TEXT_MUTED};
                 border: 1px solid transparent;
             }}
 
-            /* Table Styling */
             QTableView {{
                 background-color: {UIColors.BG_CARD};
                 alternate-background-color: {UIColors.TABLE_ALTERNATE};
@@ -715,7 +741,6 @@ class MainWindow(QMainWindow):
                 font-weight: 500;
             }}
 
-            /* Table Header */
             QHeaderView::section {{
                 background-color: {UIColors.TABLE_HEADER_BG};
                 color: {UIColors.TABLE_HEADER_TEXT};
@@ -732,10 +757,34 @@ class MainWindow(QMainWindow):
                 background-color: #e8eaed;
             }}
 
-            QHeaderView::up-arrow, QHeaderView::down-arrow {{
-                width: 6px;
-                height: 6px;
-                margin-right: 3px;
+            QScrollBar:vertical {{
+                width: 10px;
+                background: transparent;
+            }}
+
+            QScrollBar::handle:vertical {{
+                background: {UIColors.BORDER_INPUT};
+                border-radius: 5px;
+                min-height: 20px;
+            }}
+
+            QScrollBar::handle:vertical:hover {{
+                background: {UIColors.BORDER_LIGHT};
+            }}
+
+            QScrollBar:horizontal {{
+                height: 10px;
+                background: transparent;
+            }}
+
+            QScrollBar::handle:horizontal {{
+                background: {UIColors.BORDER_INPUT};
+                border-radius: 5px;
+                min-width: 20px;
+            }}
+
+            QScrollBar::handle:horizontal:hover {{
+                background: {UIColors.BORDER_LIGHT};
             }}
         """
 
@@ -747,27 +796,47 @@ class MainWindow(QMainWindow):
     def show_info(self, message: str) -> None:
         QMessageBox.information(self, "Info", message)
 
+    def _update_status_message(self) -> None:
+        """Update status message based on state."""
+        if not self.is_file_loaded:
+            self.filter_summary_label.setText("Load a file to begin")
+            self.row_count_label.setText("Ready")
+            return
+
+        if self.proxy.rowCount() == 0:
+            self.filter_summary_label.setText("No results found")
+            self.row_count_label.setText("Showing 0 records")
+        else:
+            total = len(self.model.dataframe)
+            displayed = self.proxy.rowCount()
+            if total == displayed:
+                self.row_count_label.setText(f"Showing {displayed:,} records")
+                self.filter_summary_label.setText("Filters: none active")
+            else:
+                self.row_count_label.setText(f"Showing {displayed:,} of {total:,} records")
+                self.filter_summary_label.setText(f"Filters: {self._filter_summary_text()}")
+
     def _set_loading_state(self, is_loading: bool) -> None:
-        self.load_button.setDisabled(is_loading)
-        self.user_search_button.setDisabled(is_loading)
-        self.advertising_search_button.setDisabled(is_loading)
-        self.reset_button.setDisabled(is_loading)
-        self.mode_combo.setDisabled(is_loading)
-        self.app_selector.setDisabled(is_loading)
-        self.user_id_input.setDisabled(is_loading)
-        self.advertising_id_input.setDisabled(is_loading)
+        """Set UI state during file loading."""
+        buttons = [
+            "load_button", "user_search_button", "advertising_search_button",
+            "reset_button", "mode_combo", "app_selector", "user_id_input", "advertising_id_input"
+        ]
+
+        for btn_name in buttons:
+            if hasattr(self, btn_name):
+                getattr(self, btn_name).setDisabled(is_loading)
 
         if is_loading:
-            self.status_label.setText("⏳ Loading...")
-            self.status_label.setProperty("status", "loading")
+            self.row_count_label.setText("Loading...")
             QApplication.setOverrideCursor(Qt.WaitCursor)
         else:
-            self.status_label.setText("✓ Ready")
-            self.status_label.setProperty("status", "ready")
+            if self.is_file_loaded:
+                self._update_status_message()
             QApplication.restoreOverrideCursor()
 
     def _populate_app_selector(self, df: pd.DataFrame) -> None:
-        """Populate the app selector dropdown with unique app IDs."""
+        """Populate app selector dropdown."""
         self.app_selector.clear()
         self.app_selector.addItem(ALL_APPS_FILTER)
 
@@ -778,7 +847,7 @@ class MainWindow(QMainWindow):
         self.app_selector.addItems(unique_apps)
 
     def _get_file_path(self, mode: FileSourceMode) -> str:
-        """Get file path based on selected source mode."""
+        """Get file path from user."""
         file_types = {
             FileSourceMode.MY_CHIPS: "Excel Files (*.xlsx);;All Files (*)",
             FileSourceMode.PRIME: "CSV Files (*.csv);;All Files (*)",
@@ -791,13 +860,6 @@ class MainWindow(QMainWindow):
             self, dialog_names[mode], "", file_types[mode]
         )
         return file_path
-
-    def _check_file_loaded(self) -> bool:
-        """Check if a file is loaded."""
-        if self.model.dataframe.empty:
-            self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
-            return False
-        return True
 
     def load_file(self) -> None:
         """Load a data file."""
@@ -812,7 +874,6 @@ class MainWindow(QMainWindow):
         loading.setWindowTitle("Loading")
         loading.setWindowModality(Qt.WindowModal)
         loading.setCancelButton(None)
-        loading.setStyleSheet(f"QProgressDialog {{ background-color: {UIColors.BG_CARD}; }}")
         loading.show()
 
         self._set_loading_state(True)
@@ -831,25 +892,25 @@ class MainWindow(QMainWindow):
             self.proxy.clear_filters()
             self.user_id_input.clear()
             self.advertising_id_input.clear()
+            self.is_file_loaded = True
 
-            if mode == FileSourceMode.MY_CHIPS:
-                print(f"✓ Loaded {len(df)} records from {mode_text}")
-                print(f"  Sample apps: {', '.join(df[ColumnNames.APP_ID].unique()[:5])}")
+            print(f"✓ Successfully loaded {len(df):,} records")
 
             self._populate_app_selector(df)
             self._autosize_columns()
-            self._on_proxy_changed()
-            self.status_label.setText(f"✓ Loaded {len(df):,} records")
+            self._update_status_message()
 
         except Exception as exc:
-            self.show_error(f"Failed to load file:\n{str(exc)}")
+            self.is_file_loaded = False
+            self.show_error(f"{ERROR_MESSAGES.get('INVALID_FILE', 'Error')}\n{str(exc)}")
         finally:
             loading.close()
             self._set_loading_state(False)
 
     def apply_user_search(self) -> None:
-        """Search by user ID and app."""
-        if not self._check_file_loaded():
+        """Search by user ID."""
+        if not self.is_file_loaded:
+            self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
             return
 
         user_id = self.user_id_input.text().strip()
@@ -860,14 +921,12 @@ class MainWindow(QMainWindow):
         selected_app = self.app_selector.currentText()
         self.advertising_id_input.clear()
         self.proxy.update_user_search(user_id=user_id, app_id=selected_app)
-        self._on_proxy_changed()
-
-        if self.proxy.rowCount() == 0:
-            self.show_error(ERROR_MESSAGES["NO_RESULTS"])
+        self._update_status_message()
 
     def apply_advertising_search(self) -> None:
         """Search by advertising ID."""
-        if not self._check_file_loaded():
+        if not self.is_file_loaded:
+            self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
             return
 
         if ColumnNames.ADVERTISING_ID not in self.model.dataframe.columns:
@@ -882,15 +941,11 @@ class MainWindow(QMainWindow):
         self.user_id_input.clear()
         self.app_selector.setCurrentText(ALL_APPS_FILTER)
         self.proxy.update_advertising_search(advertising_id)
-        self._on_proxy_changed()
-
-        if self.proxy.rowCount() == 0:
-            self.show_error(ERROR_MESSAGES["NO_RESULTS"])
+        self._update_status_message()
 
     def reset_view(self) -> None:
         """Reset to show all data."""
-        if self.original_df.empty:
-            self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
+        if not self.is_file_loaded:
             return
 
         self.model.set_dataframe(self.original_df)
@@ -898,8 +953,7 @@ class MainWindow(QMainWindow):
         self.user_id_input.clear()
         self.advertising_id_input.clear()
         self.app_selector.setCurrentText(ALL_APPS_FILTER)
-        self._on_proxy_changed()
-        self.status_label.setText("✓ Showing all records")
+        self._update_status_message()
 
     def _autosize_columns(self) -> None:
         """Auto-size table columns."""
@@ -922,17 +976,11 @@ class MainWindow(QMainWindow):
 
         return f"ad_id = '{self.proxy.advertising_id_query}'"
 
-    def _on_proxy_changed(self) -> None:
-        """Update UI when proxy model changes."""
-        self.proxy.invalidate()
-        row_count = self.proxy.rowCount()
-        self.row_count_label.setText(f"Records: {row_count:,}")
-        self.filter_summary_label.setText(f"Filters: {self._filter_summary_text()}")
-
     def _update_status(self) -> None:
         """Update status bar with selected cell info."""
         index = self.table.currentIndex()
         if not index.isValid():
+            self.status_label.setText("")
             return
 
         header = self.model.headerData(index.column(), Qt.Horizontal)
@@ -946,7 +994,7 @@ def main() -> None:
 
     # Suppress warnings
     os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = ''
-    warnings.filterwarnings('ignore', category=DeprecationWarning)
+    warnings.filterwarnings('ignore')
 
     app = QApplication(sys.argv)
 
@@ -955,7 +1003,7 @@ def main() -> None:
         try:
             apply_stylesheet(app, theme='light_blue.xml', invert_secondary=False)
         except Exception:
-            pass  # Fall back to custom styling
+            pass
 
     window = MainWindow()
     window.show()
