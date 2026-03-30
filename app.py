@@ -349,21 +349,14 @@ def configure_page():
 
     # --- Theme CSS ---
     dark = st.session_state.get("theme", "dark") == "dark"
-    # Theme palette
-    bg_primary = "#181C22" if dark else "#F7F9FB"
-    bg_card = "#23272F" if dark else "#FFFFFF"
-    bg_input = "#23272F" if dark else "#FFFFFF"
-    bg_dropdown = "#23272F" if dark else "#FFFFFF"
-    bg_table_even = "#23272F" if dark else "#F6F8FA"
-    bg_table_odd = "#181C22" if dark else "#FFFFFF"
-    bg_table_hover = "#31343B" if dark else "#E8F4FD"
-    border_color = "#333A45" if dark else "#E5E7EB"
-    text_primary = "#FFFFFF" if dark else "#181C22"
-    text_secondary = "#B0B8C1" if dark else "#5A5A5A"
-    accent = "#4CAF50"
-    header_bg = "#23272F" if dark else "#F1F3F4"
-    metric_bg = "#23272F" if dark else "#F8F9FA"
-
+    theme = {
+        "background_primary": "#181C22" if dark else "#FFFFFF",
+        "background_secondary": "#23272F" if dark else "#F7F9FB",
+        "text_primary": "#FFFFFF" if dark else "#181C22",
+        "text_secondary": "#B0B8C1" if dark else "#5A5A5A",
+        "border_color": "#333A45" if dark else "#E5E7EB",
+        "accent": "#4CAF50",
+    }
     css = f"""
     <style>
     .main .block-container {{
@@ -372,15 +365,15 @@ def configure_page():
         padding-right: 2rem;
     }}
     html, body, [data-testid="stAppViewContainer"] {{
-        background: {bg_primary} !important;
-        color: {text_primary} !important;
+        background: {theme['background_primary']} !important;
+        color: {theme['text_primary']} !important;
         transition: background 0.4s, color 0.4s;
     }}
     [data-testid="stHeader"] {{
         background: transparent !important;
     }}
     [data-testid="stContainer"] {{
-        background: {bg_card} !important;
+        background: {theme['background_secondary']} !important;
         border-radius: 0.5rem;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         padding: 1.5rem;
@@ -388,7 +381,7 @@ def configure_page():
         transition: background 0.4s;
     }}
     h1, h2, h3, label, p, small, th, td, span, div, .stMarkdown {{
-        color: {text_primary} !important;
+        color: {theme['text_primary']} !important;
         transition: color 0.4s;
     }}
     .stButton > button {{
@@ -397,7 +390,7 @@ def configure_page():
         transition: all 0.2s;
         border: none;
         padding: 0.5rem 1rem;
-        background: {accent} !important;
+        background: {theme['accent']} !important;
         color: #fff !important;
     }}
     .stButton > button:hover {{
@@ -406,59 +399,59 @@ def configure_page():
     }}
     .stTextInput > div > div > input,
     .stSelectbox > div > div > select {{
-        border: 1px solid {border_color};
+        border: 1px solid {theme['border_color']};
         border-radius: 0.375rem;
         padding: 0.5rem 0.75rem;
         font-size: 0.95rem;
-        background: {bg_input};
-        color: {text_primary};
+        background: {theme['background_secondary']};
+        color: {theme['text_primary']};
         transition: background 0.4s, color 0.4s;
     }}
     .stTextInput > div > div > input:focus,
     .stSelectbox > div > div > select:focus {{
-        border-color: {accent};
+        border-color: {theme['accent']};
         box-shadow: 0 0 0 3px rgba(76,175,80,0.1);
     }}
     .stSelectbox > div > div > select option {{
-        background: {bg_dropdown};
-        color: {text_primary};
+        background: {theme['background_secondary']};
+        color: {theme['text_primary']};
     }}
     [data-testid="metric-container"] {{
-        background: {metric_bg};
+        background: {theme['background_secondary']};
         border-radius: 0.5rem;
         padding: 1rem;
-        color: {text_primary};
+        color: {theme['text_primary']};
         transition: background 0.4s, color 0.4s;
         box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }}
     [data-testid="stDataFrame"] {{
         border-radius: 0.375rem;
-        border: 1px solid {border_color};
-        background: {bg_card};
-        color: {text_primary};
+        border: 1px solid {theme['border_color']};
+        background: {theme['background_secondary']};
+        color: {theme['text_primary']};
         transition: background 0.4s, color 0.4s;
     }}
     table {{
-        background: {bg_card} !important;
-        color: {text_primary} !important;
-        border-color: {border_color} !important;
+        background: {theme['background_secondary']} !important;
+        color: {theme['text_primary']} !important;
+        border-color: {theme['border_color']} !important;
         transition: background 0.4s, color 0.4s;
     }}
     th {{
-        background: {header_bg} !important;
-        color: {text_primary} !important;
+        background: {theme['background_secondary']} !important;
+        color: {theme['text_primary']} !important;
         position: sticky !important;
         top: 0 !important;
         z-index: 10 !important;
     }}
     tbody tr:nth-child(even) {{
-        background: {bg_table_even} !important;
+        background: {theme['background_primary']} !important;
     }}
     tbody tr:nth-child(odd) {{
-        background: {bg_table_odd} !important;
+        background: {theme['background_secondary']} !important;
     }}
     tbody tr:hover {{
-        background: {bg_table_hover} !important;
+        background: {theme['border_color']} !important;
     }}
     td {{
         padding: 0.5rem !important;
@@ -468,7 +461,7 @@ def configure_page():
     }}
     .stAlert {{
         border-radius: 0.375rem;
-        border-left: 4px solid {accent};
+        border-left: 4px solid {theme['accent']};
     }}
     .main {{
         padding-top: 1rem;
