@@ -329,131 +329,113 @@ def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id
         )
 
 
-def configure_page() -> None:
-    """Configure Streamlit page settings."""
+def configure_page():
+    """Configure Streamlit page settings and theme toggle."""
     st.set_page_config(
         page_title="User Inspector",
         page_icon="🔍",
         layout="wide",
         initial_sidebar_state="collapsed"
     )
-    
-    # Custom CSS for modern styling
-    st.markdown(
-        """
-        <style>
-        /* Global Styles */
-        :root {
-            --primary-color: #3b82f6;
-            --success-color: #22c55e;
-            --error-color: #ef4444;
-            --warning-color: #f59e0b;
-            --background: #f9fafb;
-            --text-primary: #1f2937;
-            --text-secondary: #6b7280;
-            --border: #e5e7eb;
-        }
-        
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
-            color: var(--text-primary);
-            background-color: var(--background);
-        }
-        
-        /* Remove top padding */
-        .main {
-            padding-top: 1rem;
-        }
-        
-        /* Card styling */
-        [data-testid="stContainer"] {
-            background-color: white;
-            border-radius: 0.5rem;
-            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
-        }
-        
-        /* Button styling */
-        .stButton > button {
-            border-radius: 0.375rem;
-            font-weight: 500;
-            transition: all 0.2s ease;
-            border: none;
-            padding: 0.5rem 1rem;
-        }
-        
-        .stButton > button:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        }
-        
-        .stButton > button[kind="primary"] {
-            background-color: var(--primary-color) !important;
-            color: white !important;
-        }
-        
-        .stButton > button[kind="secondary"] {
-            background-color: var(--text-secondary) !important;
-            color: white !important;
-        }
-        
-        /* Input field styling */
-        .stTextInput > div > div > input,
-        .stSelectbox > div > div > select {
-            border: 1px solid var(--border);
-            border-radius: 0.375rem;
-            padding: 0.5rem 0.75rem;
-            font-size: 0.95rem;
-        }
-        
-        .stTextInput > div > div > input:focus,
-        .stSelectbox > div > div > select:focus {
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
-        }
-        
-        /* Metric styling */
-        [data-testid="metric-container"] {
-            background-color: #f3f4f6;
-            border-radius: 0.375rem;
-            padding: 1rem;
-        }
-        
-        /* Dataframe styling */
-        [data-testid="stDataFrame"] {
-            border-radius: 0.375rem;
-            border: 1px solid var(--border);
-        }
-        
-        /* Headers */
-        h1, h2, h3 {
-            color: var(--text-primary);
-            font-weight: 700;
-        }
-        
-        h3 {
-            margin-top: 1.5rem;
-            margin-bottom: 1rem;
-            font-size: 1.25rem;
-        }
-        
-        /* Divider */
-        hr {
-            border: none;
-            border-top: 1px solid var(--border);
-            margin: 1rem 0;
-        }
-        
-        /* Info/Warning/Error boxes */
-        .stAlert {
-            border-radius: 0.375rem;
-            border-left: 4px solid;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+
+    # --- Theme session state ---
+    if "theme" not in st.session_state:
+        st.session_state["theme"] = "dark"
+
+    # --- Theme toggle UI ---
+    top_right = st.columns([8,1])
+    with top_right[1]:
+        toggle = st.toggle(
+            label="🌙 Dark / ☀️ Light",
+            value=(st.session_state["theme"] == "dark"),
+            key="theme_toggle",
+            help="Switch between dark and light mode."
+        )
+        st.session_state["theme"] = "dark" if toggle else "light"
+
+    # --- Theme CSS ---
+    dark = st.session_state["theme"] == "dark"
+    css = f"""
+    <style>
+    html, body, [data-testid="stAppViewContainer"] {{
+        background: {'#0E1117' if dark else '#F5F7FA'} !important;
+        color: {'#FFFFFF' if dark else '#111111'} !important;
+        transition: background 0.4s, color 0.4s;
+    }}
+    [data-testid="stHeader"] {{
+        background: transparent !important;
+    }}
+    [data-testid="stContainer"] {{
+        background: {'#1C1F26' if dark else '#FFFFFF'} !important;
+        border-radius: 0.5rem;
+        box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+        transition: background 0.4s;
+    }}
+    h1, h2, h3, label, p, small, th, td, span, div, .stMarkdown, .stTextInput, .stSelectbox, .stButton, .stDataFrame, .stMetric, .stAlert {{
+        color: {'#FFFFFF' if dark else '#111111'} !important;
+        transition: color 0.4s;
+    }}
+    .stButton > button {{
+        border-radius: 0.375rem;
+        font-weight: 500;
+        transition: all 0.2s;
+        border: none;
+        padding: 0.5rem 1rem;
+        background: #4CAF50 !important;
+        color: #fff !important;
+    }}
+    .stButton > button:hover {{
+        filter: brightness(1.1);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }}
+    .stTextInput > div > div > input,
+    .stSelectbox > div > div > select {{
+        border: 1px solid {'#333' if dark else '#e5e7eb'};
+        border-radius: 0.375rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.95rem;
+        background: {'#1C1F26' if dark else '#fff'};
+        color: {'#fff' if dark else '#111'};
+        transition: background 0.4s, color 0.4s;
+    }}
+    .stTextInput > div > div > input:focus,
+    .stSelectbox > div > div > select:focus {{
+        border-color: #4CAF50;
+        box-shadow: 0 0 0 3px rgba(76,175,80,0.1);
+    }}
+    [data-testid="metric-container"] {{
+        background: {'#1C1F26' if dark else '#f3f4f6'};
+        border-radius: 0.375rem;
+        padding: 1rem;
+        color: {'#fff' if dark else '#111'};
+        transition: background 0.4s, color 0.4s;
+    }}
+    [data-testid="stDataFrame"] {{
+        border-radius: 0.375rem;
+        border: 1px solid {'#333' if dark else '#e5e7eb'};
+        background: {'#1C1F26' if dark else '#fff'};
+        color: {'#fff' if dark else '#111'};
+        transition: background 0.4s, color 0.4s;
+    }}
+    table, th, td {{
+        background: {'#1C1F26' if dark else '#fff'} !important;
+        color: {'#fff' if dark else '#111'} !important;
+        border-color: {'#333' if dark else '#e5e7eb'} !important;
+        transition: background 0.4s, color 0.4s;
+    }}
+    .stAlert {{
+        border-radius: 0.375rem;
+        border-left: 4px solid #4CAF50;
+    }}
+    /* Fade effect for smooth switching */
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stContainer"], [data-testid="stDataFrame"] {{
+        transition: background 0.4s, color 0.4s;
+    }}
+    </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
 
 def main() -> None:
