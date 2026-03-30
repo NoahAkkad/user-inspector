@@ -338,7 +338,7 @@ def configure_page() -> None:
         initial_sidebar_state="collapsed"
     )
     
-    # Custom CSS for modern styling
+    # Single neutral light-theme CSS for consistent readability.
     st.markdown(
         """
         <style>
@@ -402,9 +402,24 @@ def configure_page() -> None:
         .stTextInput > div > div > input,
         .stSelectbox > div > div > select {
             border: 1px solid var(--border);
+            background-color: #ffffff;
+            color: var(--text-primary);
             border-radius: 0.375rem;
             padding: 0.5rem 0.75rem;
             font-size: 0.95rem;
+        }
+
+        /* Keep BaseWeb select controls readable in Streamlit */
+        div[data-baseweb="select"] > div {
+            background-color: #ffffff !important;
+            color: var(--text-primary) !important;
+            border-color: var(--border) !important;
+        }
+
+        div[data-baseweb="popover"] div,
+        div[data-baseweb="menu"] div {
+            background-color: #ffffff !important;
+            color: var(--text-primary) !important;
         }
         
         .stTextInput > div > div > input:focus,
@@ -424,6 +439,15 @@ def configure_page() -> None:
         [data-testid="stDataFrame"] {
             border-radius: 0.375rem;
             border: 1px solid var(--border);
+            background-color: #ffffff;
+            color: var(--text-primary);
+        }
+
+        [data-testid="stDataFrame"] table,
+        [data-testid="stDataFrame"] th,
+        [data-testid="stDataFrame"] td {
+            color: var(--text-primary) !important;
+            background-color: #ffffff !important;
         }
         
         /* Headers */
@@ -456,116 +480,9 @@ def configure_page() -> None:
     )
 
 
-def inject_theme_css(theme):
-    if theme == "dark":
-        st.markdown(
-            f"""
-            <style>
-            body, .main, [data-testid="stAppViewContainer"] {{
-                background: #0E1117 !important;
-                color: #FFFFFF !important;
-                transition: background 0.4s, color 0.4s;
-            }}
-            [data-testid="stContainer"], .stButton > button, .stTextInput > div > div > input, .stSelectbox > div > div > select {{
-                background: #1C1F26 !important;
-                color: #FFFFFF !important;
-                border-color: #22242a !important;
-                transition: background 0.4s, color 0.4s, border-color 0.4s;
-            }}
-            h1, h2, h3, label, p, small, div, span, th, td {{
-                color: #FFFFFF !important;
-                transition: color 0.4s;
-            }}
-            .stButton > button {{
-                background: #4CAF50 !important;
-                color: #fff !important;
-            }}
-            .stButton > button:hover {{
-                filter: brightness(1.1);
-            }}
-            [data-testid="metric-container"] {{
-                background: #1C1F26 !important;
-                color: #fff !important;
-            }}
-            [data-testid="stDataFrame"] {{
-                background: #1C1F26 !important;
-                color: #fff !important;
-                border: 1px solid #22242a !important;
-            }}
-            table, th, td {{
-                background: #1C1F26 !important;
-                color: #fff !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            f"""
-            <style>
-            body, .main, [data-testid="stAppViewContainer"] {{
-                background: #F5F7FA !important;
-                color: #111111 !important;
-                transition: background 0.4s, color 0.4s;
-            }}
-            [data-testid="stContainer"], .stButton > button, .stTextInput > div > div > input, .stSelectbox > div > div > select {{
-                background: #FFFFFF !important;
-                color: #111111 !important;
-                border-color: #e5e7eb !important;
-                transition: background 0.4s, color 0.4s, border-color 0.4s;
-            }}
-            h1, h2, h3, label, p, small, div, span, th, td {{
-                color: #111111 !important;
-                transition: color 0.4s;
-            }}
-            .stButton > button {{
-                background: #4CAF50 !important;
-                color: #fff !important;
-            }}
-            .stButton > button:hover {{
-                filter: brightness(0.95);
-            }}
-            [data-testid="metric-container"] {{
-                background: #fff !important;
-                color: #111 !important;
-            }}
-            [data-testid="stDataFrame"] {{
-                background: #fff !important;
-                color: #111 !important;
-                border: 1px solid #e5e7eb !important;
-            }}
-            table, th, td {{
-                background: #fff !important;
-                color: #111 !important;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-def render_theme_toggle():
-    """Render the dark/light mode toggle in the top-right corner."""
-    with st.container():
-        col_spacer, col_toggle = st.columns([10, 1])
-        with col_toggle:
-            if "theme" not in st.session_state:
-                st.session_state["theme"] = "dark"
-            theme = st.session_state["theme"]
-            toggle = st.toggle(
-                label="🌙 Dark / ☀️ Light",
-                value=(theme == "dark"),
-                key="theme_toggle",
-                help="Switch between dark and light mode",
-            )
-            st.session_state["theme"] = "dark" if toggle else "light"
-    inject_theme_css(st.session_state["theme"])
-
-
 def main() -> None:
     """Main application entry point."""
     configure_page()
-    render_theme_toggle()
     
     # Initialize session state
     if "original_df" not in st.session_state:
