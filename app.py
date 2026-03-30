@@ -1,3 +1,4 @@
+import os
 import sys
 from dataclasses import dataclass
 from enum import Enum
@@ -30,12 +31,15 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-# Import qt-material with fallback
+# Import qt-material with fallback (after PyQt5)
 try:
     from qt_material import apply_stylesheet
     HAS_QT_MATERIAL = True
 except ImportError:
     HAS_QT_MATERIAL = False
+
+# Base path helper for resources and packaging
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ============================================================================
 # Constants
@@ -54,6 +58,7 @@ class ColumnNames:
     PAYOUT = "payout"
     DATE = "date"
     ADVERTISING_ID = "advertising_id"
+    CLICK_ID = "ClickID"
     POSTBACK_URL = "Postback URL"
 
 
@@ -253,6 +258,11 @@ class DataModel(QAbstractTableModel):
         }
         self.endResetModel()
 
+    def get_row_data(self, row: int) -> dict:
+        if 0 <= row < len(self._dataframe):
+            return self._dataframe.iloc[row].to_dict()
+        return {}
+
     @property
     def dataframe(self) -> pd.DataFrame:
         return self._dataframe
@@ -308,6 +318,7 @@ class SortFilterProxyModel(QSortFilterProxyModel):
         self.app_id_query = ALL_APPS_FILTER
         self.advertising_id_query = ""
         self._has_advertising_id = False
+        self._has_click_id = False
         self.setFilterCaseSensitivity(Qt.CaseSensitive)
         self.setSortCaseSensitivity(Qt.CaseInsensitive)
         self.setDynamicSortFilter(True)
@@ -316,6 +327,7 @@ class SortFilterProxyModel(QSortFilterProxyModel):
         super().setSourceModel(model)
         if isinstance(model, DataModel):
             self._has_advertising_id = ColumnNames.ADVERTISING_ID in model.dataframe.columns
+            self._has_click_id = ColumnNames.CLICK_ID in model.dataframe.columns
 
     def update_user_search(self, user_id: str, app_id: str) -> None:
         self.user_id_query = user_id.strip()
@@ -357,9 +369,12 @@ class SortFilterProxyModel(QSortFilterProxyModel):
             return True
 
         if self.advertising_id_query:
-            if not self._has_advertising_id:
+            if self._has_advertising_id:
+                row_advertising_id = self._get_source_value(source_row, ColumnNames.ADVERTISING_ID)
+            elif self._has_click_id:
+                row_advertising_id = self._get_source_value(source_row, ColumnNames.CLICK_ID)
+            else:
                 return False
-            row_advertising_id = self._get_source_value(source_row, ColumnNames.ADVERTISING_ID)
             return row_advertising_id == self.advertising_id_query
 
         return True
@@ -396,8 +411,9 @@ class DataTableView(QTableView):
         self.verticalHeader().setVisible(False)
         self.verticalHeader().setDefaultSectionSize(UIConstants.ROW_HEIGHT)
 
-        # Double-click row signal
-        self.doubleClicked.connect(self._on_row_double_click)
+        # Double-click row to show details (handled by MainWindow)
+        # Avoid custom signal usage here to prevent crashes.
+        pass
 
     def copy_selected_cell(self) -> None:
         index = self.currentIndex()
@@ -406,14 +422,6 @@ class DataTableView(QTableView):
         text = index.data(Qt.DisplayRole) or ""
         QApplication.clipboard().setText(str(text))
 
-    def _on_row_double_click(self, index: QModelIndex) -> None:
-        """Handle double-click on table row."""
-        if not index.isValid() or not hasattr(self, 'parent') or not self.parent():
-            return
-        # Emit signal that main window can subscribe to
-        self.row_double_clicked.emit(index)
-
-    row_double_clicked = None  # Will be connected in main window
 
 
 # ============================================================================
@@ -592,6 +600,7 @@ class MainWindow(QMainWindow):
         self.table = DataTableView()
         self.table.setModel(self.proxy)
         self.table.selectionModel().selectionChanged.connect(self._update_status)
+        self.table.doubleClicked.connect(self._on_row_double_click)
 
         layout.addWidget(self.table)
         return frame
@@ -846,6 +855,13 @@ class MainWindow(QMainWindow):
         unique_apps = sorted(df[ColumnNames.APP_ID].dropna().unique())[:1000]
         self.app_selector.addItems(unique_apps)
 
+    def _find_click_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Find first column containing 'click' (case-insensitive)."""
+        for col in df.columns:
+            if "click" in str(col).lower():
+                return col
+        return None
+
     def _get_file_path(self, mode: FileSourceMode) -> str:
         """Get file path from user."""
         file_types = {
@@ -885,6 +901,10 @@ class MainWindow(QMainWindow):
                 if mode == FileSourceMode.MY_CHIPS
                 else self.postback_data.load(file_path)
             )
+            # Data cleaning for My Chips advertising ID mapping
+            if mode == FileSourceMode.MY_CHIPS and ColumnNames.CLICK_ID in df.columns:
+                df[ColumnNames.CLICK_ID] = df[ColumnNames.CLICK_ID].astype(str).str.strip()
+
             df = df.reset_index(drop=True)
 
             self.original_df = df.copy()
@@ -929,18 +949,45 @@ class MainWindow(QMainWindow):
             self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
             return
 
-        if ColumnNames.ADVERTISING_ID not in self.model.dataframe.columns:
-            self.show_error(ERROR_MESSAGES["ADVERTISING_ID_NOT_FOUND"])
-            return
+        mode_text = self.mode_combo.currentText()
+        mode = FileSourceMode(mode_text)
 
-        advertising_id = self.advertising_id_input.text().strip()
+        advertising_id = str(self.advertising_id_input.text()).strip()
         if not advertising_id:
             self.show_error(ERROR_MESSAGES["ADVERTISING_ID_REQUIRED"])
             return
 
         self.user_id_input.clear()
         self.app_selector.setCurrentText(ALL_APPS_FILTER)
-        self.proxy.update_advertising_search(advertising_id)
+
+        if mode == FileSourceMode.PRIME:
+            if ColumnNames.ADVERTISING_ID not in self.model.dataframe.columns:
+                self.show_error(ERROR_MESSAGES["ADVERTISING_ID_NOT_FOUND"])
+                return
+
+            self.proxy.update_advertising_search(advertising_id)
+            self._update_status_message()
+            return
+
+        # MY_CHIPS path
+        click_col = self._find_click_column(self.original_df)
+        if click_col is None:
+            self.show_error(ERROR_MESSAGES["ADVERTISING_ID_NOT_FOUND"])
+            return
+
+        normalized_value = advertising_id.lower()
+        self.original_df[click_col] = self.original_df[click_col].astype(str).str.strip().str.lower()
+
+        print("Using column:", click_col)
+        print("Input:", normalized_value)
+        print("Sample values:", self.original_df[click_col].head(5).tolist())
+
+        filtered_df = self.original_df[self.original_df[click_col] == normalized_value]
+        if filtered_df.empty:
+            filtered_df = self.original_df[self.original_df[click_col].str.contains(normalized_value, na=False)]
+
+        self.model.set_dataframe(filtered_df.reset_index(drop=True))
+        self.proxy.clear_filters()
         self._update_status_message()
 
     def reset_view(self) -> None:
@@ -975,6 +1022,27 @@ class MainWindow(QMainWindow):
             return f"user_id = '{self.proxy.user_id_query}' & app = '{self.proxy.app_id_query}'"
 
         return f"ad_id = '{self.proxy.advertising_id_query}'"
+
+    def _on_row_double_click(self, index: QModelIndex) -> None:
+        """Handle row double click without custom signal."""
+        if not index.isValid():
+            return
+
+        source_index = self.proxy.mapToSource(index)
+        if not source_index.isValid():
+            return
+
+        row = source_index.row()
+        data = self.model.get_row_data(row)
+        self.show_row_details(data)
+
+    def show_row_details(self, data: dict) -> None:
+        """Show a row detail popup."""
+        if not data:
+            return
+
+        message = "\n".join([f"{k}: {v}" for k, v in data.items()])
+        QMessageBox.information(self, "Row Details", message)
 
     def _update_status(self) -> None:
         """Update status bar with selected cell info."""
@@ -1011,4 +1079,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # This will show crash info when launched from terminal for debugging.
+        print("Fatal error:", e)
+        raise
