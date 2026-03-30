@@ -126,7 +126,7 @@ def render_header() -> None:
     """Render a compact top header for tool-style UX."""
     st.markdown(
         """
-        <div style="padding: 0.35rem 0 0.25rem 0; text-align: left;">
+        <div style="padding: 0.02rem 0 0.18rem 0; text-align: left; margin-top: 0;">
             <h1 style="margin: 0; font-size: 1.35rem; color: #1f2937; font-weight: 700; line-height: 1.2;">
                 🔍 User Inspector
             </h1>
@@ -348,13 +348,28 @@ def configure_page() -> None:
         /* Keep content readable and left-aligned without full-width stretching */
         .block-container {
             max-width: 1080px;
-            padding-top: 0.7rem;
+            padding-top: 0.05rem !important;
             padding-bottom: 1.25rem;
+        }
+
+        [data-testid="stAppViewContainer"] .main .block-container {
+            padding-top: 0.05rem !important;
+            margin-top: 0 !important;
+        }
+
+        [data-testid="stAppViewContainer"] .main {
+            padding-top: 0 !important;
         }
         
         /* Remove top padding */
         .main {
-            padding-top: 0.25rem;
+            padding-top: 0 !important;
+        }
+
+        .block-container > div:first-child,
+        .block-container > div:first-child > div:first-child {
+            margin-top: 0 !important;
+            padding-top: 0 !important;
         }
         
         /* Card styling */
