@@ -123,40 +123,25 @@ def run_search(
 
 
 def render_header() -> None:
-    """Render the header section."""
+    """Render a compact top header for tool-style UX."""
     st.markdown(
         """
-        <div style="padding: 2rem 0; text-align: center;">
-            <h1 style="margin: 0; font-size: 2.5rem; color: #1f2937; font-weight: 700;">
+        <div style="padding: 0.35rem 0 0.25rem 0; text-align: left;">
+            <h1 style="margin: 0; font-size: 1.35rem; color: #1f2937; font-weight: 700; line-height: 1.2;">
                 🔍 User Inspector
             </h1>
-            <p style="margin: 0.5rem 0 0 0; font-size: 1rem; color: #6b7280;">
+            <p style="margin: 0.12rem 0 0 0; font-size: 0.84rem; color: #6b7280; line-height: 1.3;">
                 Analyze user activity from your uploaded data
             </p>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.divider()
-
-
-def render_preview_card(df: pd.DataFrame) -> None:
-    """Render the data preview section."""
-    st.markdown("### 📊 Step 2: Preview Data")
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Total Rows", f"{len(df):,}")
-    with col2:
-        st.metric("Total Columns", len(df.columns))
-    with col3:
-        row_estimate = f"{len(df) * 0.0001:.1f}MB" if len(df) > 0 else "0MB"
-        st.metric("Data Size", row_estimate)
 
 
 def render_search_controls(app_options: List[str]) -> tuple:
     """Render search controls. Returns (user_id, app_filter, search_clicked, reset_clicked)."""
-    st.markdown("### 🔎 Step 3: Search & Filter")
+    st.markdown("### 🔎 Step 2: Search & Filter")
     
     with st.container():
         col1, col2 = st.columns(2)
@@ -264,7 +249,7 @@ def get_display_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id_query: str, app_filter: str) -> None:
     """Render the results section."""
-    st.markdown("### 📈 Step 4: Analysis Results")
+    st.markdown("### 📈 Step 3: Analysis Results")
     
     # Show active filters
     if user_id_query or (app_filter and app_filter != "All"):
@@ -297,7 +282,7 @@ def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id
     if filtered_df.empty:
         st.markdown(
             """
-            <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 1rem; margin: 1rem 0; border-radius: 0.375rem; text-align: center; color: #7f1d1d;">
+            <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 0.85rem; margin: 0.65rem 0; border-radius: 0.375rem; text-align: left; color: #7f1d1d;">
                 <strong>No results found</strong>
                 <br>
                 <small>Try adjusting your search filters</small>
@@ -334,7 +319,7 @@ def configure_page() -> None:
     st.set_page_config(
         page_title="User Inspector",
         page_icon="🔍",
-        layout="wide",
+        layout="centered",
         initial_sidebar_state="collapsed"
     )
     
@@ -359,10 +344,17 @@ def configure_page() -> None:
             color: var(--text-primary);
             background-color: var(--background);
         }
+
+        /* Keep content readable and left-aligned without full-width stretching */
+        .block-container {
+            max-width: 1080px;
+            padding-top: 0.7rem;
+            padding-bottom: 1.25rem;
+        }
         
         /* Remove top padding */
         .main {
-            padding-top: 1rem;
+            padding-top: 0.25rem;
         }
         
         /* Card styling */
@@ -370,8 +362,8 @@ def configure_page() -> None:
             background-color: white;
             border-radius: 0.5rem;
             box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-            padding: 1.5rem;
-            margin-bottom: 1.5rem;
+            padding: 1rem;
+            margin-bottom: 0.9rem;
         }
         
         /* Button styling */
@@ -457,16 +449,16 @@ def configure_page() -> None:
         }
         
         h3 {
-            margin-top: 1.5rem;
-            margin-bottom: 1rem;
-            font-size: 1.25rem;
+            margin-top: 0.7rem;
+            margin-bottom: 0.6rem;
+            font-size: 1.05rem;
         }
         
         /* Divider */
         hr {
             border: none;
             border-top: 1px solid var(--border);
-            margin: 1rem 0;
+            margin: 0.65rem 0;
         }
         
         /* Info/Warning/Error boxes */
@@ -528,7 +520,7 @@ def main() -> None:
         else:
             st.markdown(
                 """
-                <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; margin: 1rem 0; border-radius: 0.375rem; text-align: center; color: #92400e;">
+                <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 0.85rem; margin: 0.65rem 0; border-radius: 0.375rem; text-align: left; color: #92400e;">
                     <p style="margin: 0;"><strong>Upload a file to begin</strong></p>
                     <small>Supports Excel (.xlsx) and CSV (.csv) formats</small>
                 </div>
@@ -574,10 +566,7 @@ def main() -> None:
         st.info("No data available after parsing.")
         return
     
-    # Step 2: Preview
-    render_preview_card(st.session_state.original_df)
-    
-    # Step 3: Search Controls
+    # Step 2: Search Controls
     app_options = ["All"] + sorted(
         st.session_state.original_df["app_id"].dropna().astype(str).unique().tolist()
     )
@@ -596,7 +585,7 @@ def main() -> None:
         )
         st.rerun()
     
-    # Step 4: Results
+    # Step 3: Results and summary
     render_results(
         st.session_state.filtered_df,
         st.session_state.original_df,
