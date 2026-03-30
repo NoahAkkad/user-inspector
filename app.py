@@ -45,7 +45,10 @@ def load_my_chips(df: pd.DataFrame) -> pd.DataFrame:
     df["app_id"], df["user_id"] = zip(*df["UserID"].apply(extract_ids))
 
     df = normalize_id_columns(df, ["app_id", "user_id"])
-    df = df[(df["app_id"] != "") & (df["user_id"] != "")]
+    df = df[
+        (df["app_id"] != "") & (df["app_id"] != "None") &
+        (df["user_id"] != "") & (df["user_id"] != "None")
+    ]
     return df
 
 
@@ -86,17 +89,17 @@ def load_prime(df: pd.DataFrame) -> pd.DataFrame:
     df = pd.concat([df, parsed], axis=1)
 
     df = normalize_id_columns(df, ["app_id", "user_id"])
-    df = df[(df["app_id"] != "") & (df["user_id"] != "")]
-    
-    # Clean and normalize offer_name and task_name
+    df = df[
+        (df["app_id"] != "") & (df["app_id"] != "None") &
+        (df["user_id"] != "") & (df["user_id"] != "None")
+    ]
+
     if "offer_name" in df.columns:
         df["offer_name"] = df["offer_name"].fillna("—")
     if "task_name" in df.columns:
         df["task_name"] = df["task_name"].fillna("—")
-    
+
     return df
-
-
 
 
 def run_search(
@@ -126,13 +129,14 @@ def render_header() -> None:
     """Render a compact top header for tool-style UX."""
     st.markdown(
         """
-        <div style="padding: 0.02rem 0 0.18rem 0; text-align: left; margin-top: 0;">
+        <div style="padding: 0.05rem 0 0.2rem 0; margin: 0; text-align: left;">
             <h1 style="margin: 0; font-size: 1.35rem; color: #1f2937; font-weight: 700; line-height: 1.2;">
                 🔍 User Inspector
             </h1>
             <p style="margin: 0.12rem 0 0 0; font-size: 0.84rem; color: #6b7280; line-height: 1.3;">
                 Analyze user activity from your uploaded data
             </p>
+            <hr style="border: none; border-top: 1px solid #9ca3af; margin: 0.6rem 0 0 0;">
         </div>
         """,
         unsafe_allow_html=True,
@@ -150,14 +154,16 @@ def render_search_controls(app_options: List[str]) -> tuple:
             user_id_input = st.text_input(
                 label="User ID",
                 placeholder="e.g., 264195",
-                help="Enter the user ID to search for"
+                help="Enter the user ID to search for",
+                key="search_user_id"
             )
         
         with col2:
             app_choice = st.selectbox(
                 label="App",
                 options=app_options,
-                help="Filter results by app (optional)"
+                help="Filter results by app (optional)",
+                key="search_app"
             )
         
         col_search, col_reset, col_spacer = st.columns([1, 1, 3])
@@ -268,6 +274,18 @@ def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id
             unsafe_allow_html=True,
         )
     
+    # Show no-filter hint when showing full dataset
+    filters_active = bool(user_id_query) or (app_filter and app_filter != "All")
+    if not filters_active:
+        st.markdown(
+            """
+            <div style="background:#f0f9ff; border-left:4px solid #38bdf8; padding:0.6rem 0.75rem; margin:0.4rem 0 0.6rem 0; border-radius:0.375rem;">
+                <small style="color:#0369a1;">Showing all rows — enter a User ID or select an App to filter.</small>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     # Show statistics
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -348,28 +366,18 @@ def configure_page() -> None:
         /* Keep content readable and left-aligned without full-width stretching */
         .block-container {
             max-width: 1080px;
-            padding-top: 0.05rem !important;
+            padding-top: 2.25rem !important;
             padding-bottom: 1.25rem;
         }
 
-        [data-testid="stAppViewContainer"] .main .block-container {
-            padding-top: 0.05rem !important;
+        [data-testid="stAppViewContainer"] {
             margin-top: 0 !important;
-        }
-
-        [data-testid="stAppViewContainer"] .main {
             padding-top: 0 !important;
         }
         
         /* Remove top padding */
         .main {
-            padding-top: 0 !important;
-        }
-
-        .block-container > div:first-child,
-        .block-container > div:first-child > div:first-child {
-            margin-top: 0 !important;
-            padding-top: 0 !important;
+            padding-top: 0.6rem !important;
         }
         
         /* Card styling */
@@ -525,7 +533,7 @@ def main() -> None:
                         <div>
                             <strong style="color: #166534;">{uploaded_file.name}</strong>
                             <br>
-                            <small style="color: #4ade80;">{file_size_kb:.1f} KB</small>
+                            <small style="color: #15803d;">{file_size_kb:.1f} KB</small>
                         </div>
                     </div>
                 </div>
@@ -554,12 +562,19 @@ def main() -> None:
             with st.spinner("Loading file..."):
                 if file_name.endswith(".csv"):
                     df_raw = pd.read_csv(uploaded_file)
-                    df = load_prime(df_raw)
                 elif file_name.endswith(".xlsx"):
                     df_raw = pd.read_excel(uploaded_file, engine="openpyxl")
+                else:
+                    st.error("Unsupported file type. Please upload .xlsx or .csv.")
+                    return
+
+                # Detect format by column presence, not file extension
+                if "Postback URL" in df_raw.columns:
+                    df = load_prime(df_raw)
+                elif "UserID" in df_raw.columns:
                     df = load_my_chips(df_raw)
                 else:
-                    st.error("Unsupported file type")
+                    st.error("Unrecognized file format. Expected a 'Postback URL' column (Prime) or 'UserID' column (My Chips).")
                     return
                 
                 st.session_state.original_df = df
@@ -567,8 +582,8 @@ def main() -> None:
                 st.session_state.file_loaded = True
                 st.session_state.current_file_name = file_name
             
-            # Show success message
-            st.success(f"✓ File loaded successfully! Ready to search.")
+            # Show success message with row count
+            st.success(f"✓ Loaded {len(df):,} rows. Use filters below to search.")
         
         except Exception as e:
             st.error(f"❌ Error loading file: {str(e)}")
@@ -583,13 +598,18 @@ def main() -> None:
     
     # Step 2: Search Controls
     app_options = ["All"] + sorted(
-        st.session_state.original_df["app_id"].dropna().astype(str).unique().tolist()
+        [
+            v for v in st.session_state.original_df["app_id"].dropna().astype(str).unique().tolist()
+            if v not in ("", "None", "nan")
+        ]
     )
     user_id_input, app_choice, search_button, reset_button = render_search_controls(app_options)
     
     # Handle search/reset
     if reset_button:
         st.session_state.filtered_df = st.session_state.original_df.copy()
+        st.session_state.search_user_id = ""
+        st.session_state.search_app = "All"
         st.rerun()
     
     if search_button:
