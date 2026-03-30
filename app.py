@@ -123,36 +123,27 @@ def run_search(
 
 
 def render_header() -> None:
-    """Render the compact header section with title and theme toggle."""
-    col_left, col_right = st.columns([4, 1])
-    with col_left:
-        st.markdown(
-            """
-            <div style="display: flex; align-items: center; gap: 1rem;">
-                <h1 style="margin: 0; font-size: 1.5rem; font-weight: 700;">🔍 User Inspector</h1>
-                <p style="margin: 0; font-size: 0.9rem; opacity: 0.7;">Analyze user activity from your uploaded data</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with col_right:
-        # Theme toggle
-        if "theme" not in st.session_state:
-            st.session_state["theme"] = "dark"
-        toggle = st.toggle(
-            label="🌙 Dark / ☀️ Light",
-            value=(st.session_state["theme"] == "dark"),
-            key="theme_toggle",
-            help="Switch between dark and light mode."
-        )
-        st.session_state["theme"] = "dark" if toggle else "light"
+    """Render the header section."""
+    st.markdown(
+        """
+        <div style="padding: 2rem 0; text-align: center;">
+            <h1 style="margin: 0; font-size: 2.5rem; color: #1f2937; font-weight: 700;">
+                🔍 User Inspector
+            </h1>
+            <p style="margin: 0.5rem 0 0 0; font-size: 1rem; color: #6b7280;">
+                Analyze user activity from your uploaded data
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.divider()
 
 
 def render_preview_card(df: pd.DataFrame) -> None:
-    """Render the data summary with clean metric cards."""
-    st.markdown("### 📊 Data Summary")
-
+    """Render the data preview section."""
+    st.markdown("### 📊 Step 2: Preview Data")
+    
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Rows", f"{len(df):,}")
@@ -165,7 +156,7 @@ def render_preview_card(df: pd.DataFrame) -> None:
 
 def render_search_controls(app_options: List[str]) -> tuple:
     """Render search controls. Returns (user_id, app_filter, search_clicked, reset_clicked)."""
-    st.markdown("### 🔎 Search & Filter")
+    st.markdown("### 🔎 Step 3: Search & Filter")
     
     with st.container():
         col1, col2 = st.columns(2)
@@ -273,7 +264,7 @@ def get_display_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id_query: str, app_filter: str) -> None:
     """Render the results section."""
-    st.markdown("### 📈 Results")
+    st.markdown("### 📈 Step 4: Analysis Results")
     
     # Show active filters
     if user_id_query or (app_filter and app_filter != "All"):
@@ -338,145 +329,243 @@ def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id
         )
 
 
-def configure_page():
-    """Configure Streamlit page settings and theme CSS."""
+def configure_page() -> None:
+    """Configure Streamlit page settings."""
     st.set_page_config(
         page_title="User Inspector",
         page_icon="🔍",
         layout="wide",
         initial_sidebar_state="collapsed"
     )
+    
+    # Custom CSS for modern styling
+    st.markdown(
+        """
+        <style>
+        /* Global Styles */
+        :root {
+            --primary-color: #3b82f6;
+            --success-color: #22c55e;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --background: #f9fafb;
+            --text-primary: #1f2937;
+            --text-secondary: #6b7280;
+            --border: #e5e7eb;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+            color: var(--text-primary);
+            background-color: var(--background);
+        }
+        
+        /* Remove top padding */
+        .main {
+            padding-top: 1rem;
+        }
+        
+        /* Card styling */
+        [data-testid="stContainer"] {
+            background-color: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        /* Button styling */
+        .stButton > button {
+            border-radius: 0.375rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            border: none;
+            padding: 0.5rem 1rem;
+        }
+        
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stButton > button[kind="primary"] {
+            background-color: var(--primary-color) !important;
+            color: white !important;
+        }
+        
+        .stButton > button[kind="secondary"] {
+            background-color: var(--text-secondary) !important;
+            color: white !important;
+        }
+        
+        /* Input field styling */
+        .stTextInput > div > div > input,
+        .stSelectbox > div > div > select {
+            border: 1px solid var(--border);
+            border-radius: 0.375rem;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.95rem;
+        }
+        
+        .stTextInput > div > div > input:focus,
+        .stSelectbox > div > div > select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Metric styling */
+        [data-testid="metric-container"] {
+            background-color: #f3f4f6;
+            border-radius: 0.375rem;
+            padding: 1rem;
+        }
+        
+        /* Dataframe styling */
+        [data-testid="stDataFrame"] {
+            border-radius: 0.375rem;
+            border: 1px solid var(--border);
+        }
+        
+        /* Headers */
+        h1, h2, h3 {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+        
+        h3 {
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        /* Divider */
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 1rem 0;
+        }
+        
+        /* Info/Warning/Error boxes */
+        .stAlert {
+            border-radius: 0.375rem;
+            border-left: 4px solid;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    # --- Theme CSS ---
-    dark = st.session_state.get("theme", "dark") == "dark"
-    theme = {
-        "background_primary": "#181C22" if dark else "#FFFFFF",
-        "background_secondary": "#23272F" if dark else "#F7F9FB",
-        "text_primary": "#FFFFFF" if dark else "#181C22",
-        "text_secondary": "#B0B8C1" if dark else "#5A5A5A",
-        "border_color": "#333A45" if dark else "#E5E7EB",
-        "accent": "#4CAF50",
-    }
-    css = f"""
-    <style>
-    .main .block-container {{
-        max-width: 1200px;
-        padding-left: 2rem;
-        padding-right: 2rem;
-    }}
-    html, body, [data-testid="stAppViewContainer"] {{
-        background: {theme['background_primary']} !important;
-        color: {theme['text_primary']} !important;
-        transition: background 0.4s, color 0.4s;
-    }}
-    [data-testid="stHeader"] {{
-        background: transparent !important;
-    }}
-    [data-testid="stContainer"] {{
-        background: {theme['background_secondary']} !important;
-        border-radius: 0.5rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        padding: 1.5rem;
-        margin-bottom: 1.5rem;
-        transition: background 0.4s;
-    }}
-    h1, h2, h3, label, p, small, th, td, span, div, .stMarkdown {{
-        color: {theme['text_primary']} !important;
-        transition: color 0.4s;
-    }}
-    .stButton > button {{
-        border-radius: 0.375rem;
-        font-weight: 500;
-        transition: all 0.2s;
-        border: none;
-        padding: 0.5rem 1rem;
-        background: {theme['accent']} !important;
-        color: #fff !important;
-    }}
-    .stButton > button:hover {{
-        filter: brightness(1.1);
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }}
-    .stTextInput > div > div > input,
-    .stSelectbox > div > div > select {{
-        border: 1px solid {theme['border_color']};
-        border-radius: 0.375rem;
-        padding: 0.5rem 0.75rem;
-        font-size: 0.95rem;
-        background: {theme['background_secondary']};
-        color: {theme['text_primary']};
-        transition: background 0.4s, color 0.4s;
-    }}
-    .stTextInput > div > div > input:focus,
-    .stSelectbox > div > div > select:focus {{
-        border-color: {theme['accent']};
-        box-shadow: 0 0 0 3px rgba(76,175,80,0.1);
-    }}
-    .stSelectbox > div > div > select option {{
-        background: {theme['background_secondary']};
-        color: {theme['text_primary']};
-    }}
-    [data-testid="metric-container"] {{
-        background: {theme['background_secondary']};
-        border-radius: 0.5rem;
-        padding: 1rem;
-        color: {theme['text_primary']};
-        transition: background 0.4s, color 0.4s;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-    }}
-    [data-testid="stDataFrame"] {{
-        border-radius: 0.375rem;
-        border: 1px solid {theme['border_color']};
-        background: {theme['background_secondary']};
-        color: {theme['text_primary']};
-        transition: background 0.4s, color 0.4s;
-    }}
-    table {{
-        background: {theme['background_secondary']} !important;
-        color: {theme['text_primary']} !important;
-        border-color: {theme['border_color']} !important;
-        transition: background 0.4s, color 0.4s;
-    }}
-    th {{
-        background: {theme['background_secondary']} !important;
-        color: {theme['text_primary']} !important;
-        position: sticky !important;
-        top: 0 !important;
-        z-index: 10 !important;
-    }}
-    tbody tr:nth-child(even) {{
-        background: {theme['background_primary']} !important;
-    }}
-    tbody tr:nth-child(odd) {{
-        background: {theme['background_secondary']} !important;
-    }}
-    tbody tr:hover {{
-        background: {theme['border_color']} !important;
-    }}
-    td {{
-        padding: 0.5rem !important;
-    }}
-    td[data-type="number"] {{
-        text-align: right !important;
-    }}
-    .stAlert {{
-        border-radius: 0.375rem;
-        border-left: 4px solid {theme['accent']};
-    }}
-    .main {{
-        padding-top: 1rem;
-    }}
-    html, body, [data-testid="stAppViewContainer"], [data-testid="stContainer"], [data-testid="stDataFrame"], table, th, td {{
-        transition: background 0.4s, color 0.4s;
-    }}
-    </style>
-    """
-    st.markdown(css, unsafe_allow_html=True)
+
+def inject_theme_css(theme):
+    if theme == "dark":
+        st.markdown(
+            f"""
+            <style>
+            body, .main, [data-testid="stAppViewContainer"] {{
+                background: #0E1117 !important;
+                color: #FFFFFF !important;
+                transition: background 0.4s, color 0.4s;
+            }}
+            [data-testid="stContainer"], .stButton > button, .stTextInput > div > div > input, .stSelectbox > div > div > select {{
+                background: #1C1F26 !important;
+                color: #FFFFFF !important;
+                border-color: #22242a !important;
+                transition: background 0.4s, color 0.4s, border-color 0.4s;
+            }}
+            h1, h2, h3, label, p, small, div, span, th, td {{
+                color: #FFFFFF !important;
+                transition: color 0.4s;
+            }}
+            .stButton > button {{
+                background: #4CAF50 !important;
+                color: #fff !important;
+            }}
+            .stButton > button:hover {{
+                filter: brightness(1.1);
+            }}
+            [data-testid="metric-container"] {{
+                background: #1C1F26 !important;
+                color: #fff !important;
+            }}
+            [data-testid="stDataFrame"] {{
+                background: #1C1F26 !important;
+                color: #fff !important;
+                border: 1px solid #22242a !important;
+            }}
+            table, th, td {{
+                background: #1C1F26 !important;
+                color: #fff !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            f"""
+            <style>
+            body, .main, [data-testid="stAppViewContainer"] {{
+                background: #F5F7FA !important;
+                color: #111111 !important;
+                transition: background 0.4s, color 0.4s;
+            }}
+            [data-testid="stContainer"], .stButton > button, .stTextInput > div > div > input, .stSelectbox > div > div > select {{
+                background: #FFFFFF !important;
+                color: #111111 !important;
+                border-color: #e5e7eb !important;
+                transition: background 0.4s, color 0.4s, border-color 0.4s;
+            }}
+            h1, h2, h3, label, p, small, div, span, th, td {{
+                color: #111111 !important;
+                transition: color 0.4s;
+            }}
+            .stButton > button {{
+                background: #4CAF50 !important;
+                color: #fff !important;
+            }}
+            .stButton > button:hover {{
+                filter: brightness(0.95);
+            }}
+            [data-testid="metric-container"] {{
+                background: #fff !important;
+                color: #111 !important;
+            }}
+            [data-testid="stDataFrame"] {{
+                background: #fff !important;
+                color: #111 !important;
+                border: 1px solid #e5e7eb !important;
+            }}
+            table, th, td {{
+                background: #fff !important;
+                color: #111 !important;
+            }}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+
+def render_theme_toggle():
+    """Render the dark/light mode toggle in the top-right corner."""
+    with st.container():
+        col_spacer, col_toggle = st.columns([10, 1])
+        with col_toggle:
+            if "theme" not in st.session_state:
+                st.session_state["theme"] = "dark"
+            theme = st.session_state["theme"]
+            toggle = st.toggle(
+                label="🌙 Dark / ☀️ Light",
+                value=(theme == "dark"),
+                key="theme_toggle",
+                help="Switch between dark and light mode",
+            )
+            st.session_state["theme"] = "dark" if toggle else "light"
+    inject_theme_css(st.session_state["theme"])
 
 
 def main() -> None:
     """Main application entry point."""
     configure_page()
+    render_theme_toggle()
     
     # Initialize session state
     if "original_df" not in st.session_state:
@@ -493,7 +582,7 @@ def main() -> None:
     
     # Step 1: Upload
     with st.container():
-        st.markdown("### 📤 Upload Data")
+        st.markdown("### 📤 Step 1: Upload Data")
         
         uploaded_file = st.file_uploader(
             label="Drop or select .xlsx or .csv file",
