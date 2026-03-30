@@ -349,144 +349,130 @@ def configure_page():
 
     # --- Theme CSS ---
     dark = st.session_state.get("theme", "dark") == "dark"
+    # Theme palette
+    bg_primary = "#181C22" if dark else "#F7F9FB"
+    bg_card = "#23272F" if dark else "#FFFFFF"
+    bg_input = "#23272F" if dark else "#FFFFFF"
+    bg_dropdown = "#23272F" if dark else "#FFFFFF"
+    bg_table_even = "#23272F" if dark else "#F6F8FA"
+    bg_table_odd = "#181C22" if dark else "#FFFFFF"
+    bg_table_hover = "#31343B" if dark else "#E8F4FD"
+    border_color = "#333A45" if dark else "#E5E7EB"
+    text_primary = "#FFFFFF" if dark else "#181C22"
+    text_secondary = "#B0B8C1" if dark else "#5A5A5A"
+    accent = "#4CAF50"
+    header_bg = "#23272F" if dark else "#F1F3F4"
+    metric_bg = "#23272F" if dark else "#F8F9FA"
+
     css = f"""
     <style>
-    /* Max width container */
     .main .block-container {{
         max-width: 1200px;
         padding-left: 2rem;
         padding-right: 2rem;
     }}
-
-    /* Global theme */
     html, body, [data-testid="stAppViewContainer"] {{
-        background: {'#0E1117' if dark else '#F5F7FA'} !important;
-        color: {'#FFFFFF' if dark else '#111111'} !important;
+        background: {bg_primary} !important;
+        color: {text_primary} !important;
         transition: background 0.4s, color 0.4s;
     }}
-
     [data-testid="stHeader"] {{
         background: transparent !important;
     }}
-
-    /* Cards */
     [data-testid="stContainer"] {{
-        background: {'#1C1F26' if dark else '#FFFFFF'} !important;
+        background: {bg_card} !important;
         border-radius: 0.5rem;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         padding: 1.5rem;
         margin-bottom: 1.5rem;
         transition: background 0.4s;
     }}
-
-    /* Text elements */
     h1, h2, h3, label, p, small, th, td, span, div, .stMarkdown {{
-        color: {'#FFFFFF' if dark else '#111111'} !important;
+        color: {text_primary} !important;
         transition: color 0.4s;
     }}
-
-    /* Buttons */
     .stButton > button {{
         border-radius: 0.375rem;
         font-weight: 500;
         transition: all 0.2s;
         border: none;
         padding: 0.5rem 1rem;
-        background: #4CAF50 !important;
+        background: {accent} !important;
         color: #fff !important;
     }}
-
     .stButton > button:hover {{
         filter: brightness(1.1);
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
-
-    /* Inputs */
     .stTextInput > div > div > input,
     .stSelectbox > div > div > select {{
-        border: 1px solid {'#333' if dark else '#e5e7eb'};
+        border: 1px solid {border_color};
         border-radius: 0.375rem;
         padding: 0.5rem 0.75rem;
         font-size: 0.95rem;
-        background: {'#1C1F26' if dark else '#fff'};
-        color: {'#fff' if dark else '#111'};
+        background: {bg_input};
+        color: {text_primary};
         transition: background 0.4s, color 0.4s;
     }}
-
     .stTextInput > div > div > input:focus,
     .stSelectbox > div > div > select:focus {{
-        border-color: #4CAF50;
+        border-color: {accent};
         box-shadow: 0 0 0 3px rgba(76,175,80,0.1);
     }}
-
-    /* Metrics cards */
+    .stSelectbox > div > div > select option {{
+        background: {bg_dropdown};
+        color: {text_primary};
+    }}
     [data-testid="metric-container"] {{
-        background: {'#1C1F26' if dark else '#f8f9fa'};
+        background: {metric_bg};
         border-radius: 0.5rem;
         padding: 1rem;
-        color: {'#fff' if dark else '#111'};
+        color: {text_primary};
         transition: background 0.4s, color 0.4s;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }}
-
-    /* Dataframe */
     [data-testid="stDataFrame"] {{
         border-radius: 0.375rem;
-        border: 1px solid {'#333' if dark else '#e5e7eb'};
-        background: {'#1C1F26' if dark else '#fff'};
-        color: {'#fff' if dark else '#111'};
+        border: 1px solid {border_color};
+        background: {bg_card};
+        color: {text_primary};
         transition: background 0.4s, color 0.4s;
     }}
-
-    /* Table styling */
     table {{
-        background: {'#1C1F26' if dark else '#fff'} !important;
-        color: {'#fff' if dark else '#111'} !important;
-        border-color: {'#333' if dark else '#e5e7eb'} !important;
+        background: {bg_card} !important;
+        color: {text_primary} !important;
+        border-color: {border_color} !important;
         transition: background 0.4s, color 0.4s;
     }}
-
     th {{
-        background: {'#262626' if dark else '#f1f3f4'} !important;
-        color: {'#fff' if dark else '#111'} !important;
+        background: {header_bg} !important;
+        color: {text_primary} !important;
         position: sticky !important;
         top: 0 !important;
         z-index: 10 !important;
     }}
-
     tbody tr:nth-child(even) {{
-        background: {'#2a2a2a' if dark else '#f9f9f9'} !important;
+        background: {bg_table_even} !important;
     }}
-
     tbody tr:nth-child(odd) {{
-        background: {'#1C1F26' if dark else '#fff'} !important;
+        background: {bg_table_odd} !important;
     }}
-
     tbody tr:hover {{
-        background: {'#333' if dark else '#e8f4fd'} !important;
+        background: {bg_table_hover} !important;
     }}
-
     td {{
         padding: 0.5rem !important;
     }}
-
-    /* Number alignment */
     td[data-type="number"] {{
         text-align: right !important;
     }}
-
-    /* Alerts */
     .stAlert {{
         border-radius: 0.375rem;
-        border-left: 4px solid #4CAF50;
+        border-left: 4px solid {accent};
     }}
-
-    /* Spacing */
     .main {{
         padding-top: 1rem;
     }}
-
-    /* Fade transitions */
     html, body, [data-testid="stAppViewContainer"], [data-testid="stContainer"], [data-testid="stDataFrame"], table, th, td {{
         transition: background 0.4s, color 0.4s;
     }}
