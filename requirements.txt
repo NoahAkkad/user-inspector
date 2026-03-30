@@ -1,4 +1,4 @@
 streamlit==1.32.0
-pandas>=2.0,<2.3
+pandas==2.1.4
 openpyxl==3.1.2
-pillow>=10.0,<10.3
+pillow==10.0.1
