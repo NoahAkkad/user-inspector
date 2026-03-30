@@ -123,27 +123,36 @@ def run_search(
 
 
 def render_header() -> None:
-    """Render the header section."""
-    st.markdown(
-        """
-        <div style="padding: 2rem 0; text-align: center;">
-            <h1 style="margin: 0; font-size: 2.5rem; color: #1f2937; font-weight: 700;">
-                🔍 User Inspector
-            </h1>
-            <p style="margin: 0.5rem 0 0 0; font-size: 1rem; color: #6b7280;">
-                Analyze user activity from your uploaded data
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """Render the compact header section with title and theme toggle."""
+    col_left, col_right = st.columns([4, 1])
+    with col_left:
+        st.markdown(
+            """
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <h1 style="margin: 0; font-size: 1.5rem; font-weight: 700;">🔍 User Inspector</h1>
+                <p style="margin: 0; font-size: 0.9rem; opacity: 0.7;">Analyze user activity from your uploaded data</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col_right:
+        # Theme toggle
+        if "theme" not in st.session_state:
+            st.session_state["theme"] = "dark"
+        toggle = st.toggle(
+            label="🌙 Dark / ☀️ Light",
+            value=(st.session_state["theme"] == "dark"),
+            key="theme_toggle",
+            help="Switch between dark and light mode."
+        )
+        st.session_state["theme"] = "dark" if toggle else "light"
     st.divider()
 
 
 def render_preview_card(df: pd.DataFrame) -> None:
-    """Render the data preview section."""
-    st.markdown("### 📊 Step 2: Preview Data")
-    
+    """Render the data summary with clean metric cards."""
+    st.markdown("### 📊 Data Summary")
+
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total Rows", f"{len(df):,}")
@@ -156,7 +165,7 @@ def render_preview_card(df: pd.DataFrame) -> None:
 
 def render_search_controls(app_options: List[str]) -> tuple:
     """Render search controls. Returns (user_id, app_filter, search_clicked, reset_clicked)."""
-    st.markdown("### 🔎 Step 3: Search & Filter")
+    st.markdown("### 🔎 Search & Filter")
     
     with st.container():
         col1, col2 = st.columns(2)
@@ -264,7 +273,7 @@ def get_display_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id_query: str, app_filter: str) -> None:
     """Render the results section."""
-    st.markdown("### 📈 Step 4: Analysis Results")
+    st.markdown("### 📈 Results")
     
     # Show active filters
     if user_id_query or (app_filter and app_filter != "All"):
@@ -330,7 +339,7 @@ def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id
 
 
 def configure_page():
-    """Configure Streamlit page settings and theme toggle."""
+    """Configure Streamlit page settings and theme CSS."""
     st.set_page_config(
         page_title="User Inspector",
         page_icon="🔍",
@@ -338,45 +347,45 @@ def configure_page():
         initial_sidebar_state="collapsed"
     )
 
-    # --- Theme session state ---
-    if "theme" not in st.session_state:
-        st.session_state["theme"] = "dark"
-
-    # --- Theme toggle UI ---
-    top_right = st.columns([8,1])
-    with top_right[1]:
-        toggle = st.toggle(
-            label="🌙 Dark / ☀️ Light",
-            value=(st.session_state["theme"] == "dark"),
-            key="theme_toggle",
-            help="Switch between dark and light mode."
-        )
-        st.session_state["theme"] = "dark" if toggle else "light"
-
     # --- Theme CSS ---
-    dark = st.session_state["theme"] == "dark"
+    dark = st.session_state.get("theme", "dark") == "dark"
     css = f"""
     <style>
+    /* Max width container */
+    .main .block-container {{
+        max-width: 1200px;
+        padding-left: 2rem;
+        padding-right: 2rem;
+    }}
+
+    /* Global theme */
     html, body, [data-testid="stAppViewContainer"] {{
         background: {'#0E1117' if dark else '#F5F7FA'} !important;
         color: {'#FFFFFF' if dark else '#111111'} !important;
         transition: background 0.4s, color 0.4s;
     }}
+
     [data-testid="stHeader"] {{
         background: transparent !important;
     }}
+
+    /* Cards */
     [data-testid="stContainer"] {{
         background: {'#1C1F26' if dark else '#FFFFFF'} !important;
         border-radius: 0.5rem;
-        box-shadow: 0 1px 2px 0 rgba(0,0,0,0.05);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         padding: 1.5rem;
         margin-bottom: 1.5rem;
         transition: background 0.4s;
     }}
-    h1, h2, h3, label, p, small, th, td, span, div, .stMarkdown, .stTextInput, .stSelectbox, .stButton, .stDataFrame, .stMetric, .stAlert {{
+
+    /* Text elements */
+    h1, h2, h3, label, p, small, th, td, span, div, .stMarkdown {{
         color: {'#FFFFFF' if dark else '#111111'} !important;
         transition: color 0.4s;
     }}
+
+    /* Buttons */
     .stButton > button {{
         border-radius: 0.375rem;
         font-weight: 500;
@@ -386,10 +395,13 @@ def configure_page():
         background: #4CAF50 !important;
         color: #fff !important;
     }}
+
     .stButton > button:hover {{
         filter: brightness(1.1);
         box-shadow: 0 4px 6px rgba(0,0,0,0.1);
     }}
+
+    /* Inputs */
     .stTextInput > div > div > input,
     .stSelectbox > div > div > select {{
         border: 1px solid {'#333' if dark else '#e5e7eb'};
@@ -400,18 +412,24 @@ def configure_page():
         color: {'#fff' if dark else '#111'};
         transition: background 0.4s, color 0.4s;
     }}
+
     .stTextInput > div > div > input:focus,
     .stSelectbox > div > div > select:focus {{
         border-color: #4CAF50;
         box-shadow: 0 0 0 3px rgba(76,175,80,0.1);
     }}
+
+    /* Metrics cards */
     [data-testid="metric-container"] {{
-        background: {'#1C1F26' if dark else '#f3f4f6'};
-        border-radius: 0.375rem;
+        background: {'#1C1F26' if dark else '#f8f9fa'};
+        border-radius: 0.5rem;
         padding: 1rem;
         color: {'#fff' if dark else '#111'};
         transition: background 0.4s, color 0.4s;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     }}
+
+    /* Dataframe */
     [data-testid="stDataFrame"] {{
         border-radius: 0.375rem;
         border: 1px solid {'#333' if dark else '#e5e7eb'};
@@ -419,18 +437,57 @@ def configure_page():
         color: {'#fff' if dark else '#111'};
         transition: background 0.4s, color 0.4s;
     }}
-    table, th, td {{
+
+    /* Table styling */
+    table {{
         background: {'#1C1F26' if dark else '#fff'} !important;
         color: {'#fff' if dark else '#111'} !important;
         border-color: {'#333' if dark else '#e5e7eb'} !important;
         transition: background 0.4s, color 0.4s;
     }}
+
+    th {{
+        background: {'#262626' if dark else '#f1f3f4'} !important;
+        color: {'#fff' if dark else '#111'} !important;
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 10 !important;
+    }}
+
+    tbody tr:nth-child(even) {{
+        background: {'#2a2a2a' if dark else '#f9f9f9'} !important;
+    }}
+
+    tbody tr:nth-child(odd) {{
+        background: {'#1C1F26' if dark else '#fff'} !important;
+    }}
+
+    tbody tr:hover {{
+        background: {'#333' if dark else '#e8f4fd'} !important;
+    }}
+
+    td {{
+        padding: 0.5rem !important;
+    }}
+
+    /* Number alignment */
+    td[data-type="number"] {{
+        text-align: right !important;
+    }}
+
+    /* Alerts */
     .stAlert {{
         border-radius: 0.375rem;
         border-left: 4px solid #4CAF50;
     }}
-    /* Fade effect for smooth switching */
-    html, body, [data-testid="stAppViewContainer"], [data-testid="stContainer"], [data-testid="stDataFrame"] {{
+
+    /* Spacing */
+    .main {{
+        padding-top: 1rem;
+    }}
+
+    /* Fade transitions */
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stContainer"], [data-testid="stDataFrame"], table, th, td {{
         transition: background 0.4s, color 0.4s;
     }}
     </style>
@@ -457,7 +514,7 @@ def main() -> None:
     
     # Step 1: Upload
     with st.container():
-        st.markdown("### 📤 Step 1: Upload Data")
+        st.markdown("### 📤 Upload Data")
         
         uploaded_file = st.file_uploader(
             label="Drop or select .xlsx or .csv file",
