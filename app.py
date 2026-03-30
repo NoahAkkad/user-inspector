@@ -1,1087 +1,585 @@
-import os
-import sys
-from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
-from urllib.parse import parse_qs, unquote, urlparse
-
+import streamlit as st
 import pandas as pd
-from PyQt5.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt
-from PyQt5.QtGui import QKeySequence
-from PyQt5.QtWidgets import (
-    QAbstractItemView,
-    QApplication,
-    QComboBox,
-    QDialog,
-    QFileDialog,
-    QFrame,
-    QHBoxLayout,
-    QHeaderView,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QProgressDialog,
-    QPushButton,
-    QShortcut,
-    QStyle,
-    QTableView,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
-
-# Import qt-material with fallback (after PyQt5)
-try:
-    from qt_material import apply_stylesheet
-    HAS_QT_MATERIAL = True
-except ImportError:
-    HAS_QT_MATERIAL = False
-
-# Base path helper for resources and packaging
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# ============================================================================
-# Constants
-# ============================================================================
-
-class FileSourceMode(Enum):
-    """Supported data source file types."""
-    MY_CHIPS = "My Chips"
-    PRIME = "Prime"
+from urllib.parse import parse_qs, urlparse
+from typing import List, Dict
+from datetime import datetime
 
 
-class ColumnNames:
-    """Standardized column names for data access."""
-    USER_ID = "user_id"
-    APP_ID = "app_id"
-    PAYOUT = "payout"
-    DATE = "date"
-    ADVERTISING_ID = "advertising_id"
-    CLICK_ID = "ClickID"
-    POSTBACK_URL = "Postback URL"
-
-
-class UIConstants:
-    """UI dimensions and layout constants."""
-    WINDOW_WIDTH = 1600
-    WINDOW_HEIGHT = 1000
-    ROW_HEIGHT = 34
-    MAX_COLUMN_WIDTH = 400
-    ROOT_MARGINS = (16, 16, 16, 16)
-    SECTION_MARGINS = (14, 12, 14, 12)
-    SECTION_SPACING = 12
-    FOOTER_MARGINS = (14, 12, 14, 12)
-    BUTTON_HEIGHT = 36
-    INPUT_HEIGHT = 36
-
-
-class UIColors:
-    """Centralized color palette for styling."""
-    BG_MAIN = "#f8f9fa"
-    BG_CARD = "#ffffff"
-    BORDER_LIGHT = "#e9ecef"
-    BORDER_INPUT = "#dee2e6"
-    TEXT_PRIMARY = "#1a1a1a"
-    TEXT_SECONDARY = "#495057"
-    TEXT_MUTED = "#6c757d"
-    PRIMARY_BUTTON = "#0078d7"
-    PRIMARY_BUTTON_HOVER = "#005fa3"
-    PRIMARY_BUTTON_ACTIVE = "#004078"
-    SECONDARY_BUTTON = "#f0f0f0"
-    SECONDARY_BUTTON_TEXT = "#212529"
-    DISABLED_BG = "#e9ecef"
-    TABLE_GRID = "#e9ecef"
-    TABLE_ALTERNATE = "#f8f9fa"
-    TABLE_HOVER = "#e8f4ff"
-    TABLE_SELECTED = "#0078d7"
-    TABLE_HEADER_BG = "#f0f2f5"
-    TABLE_HEADER_TEXT = "#1a1a1a"
-    TABLE_HEADER_BORDER = "#dee2e6"
-    SUCCESS = "#28a745"
-    WARNING = "#ffc107"
-    ERROR = "#dc3545"
-    INFO = "#17a2b8"
-
-
-ALL_APPS_FILTER = "All Apps"
-
-ERROR_MESSAGES = {
-    "FILE_NOT_LOADED": "Load a file to begin.",
-    "USER_ID_REQUIRED": "Please enter a user ID.",
-    "ADVERTISING_ID_NOT_FOUND": "The loaded file does not contain an advertising ID column.",
-    "ADVERTISING_ID_REQUIRED": "Please enter an advertising ID.",
-    "MISSING_COLUMNS": "Missing required columns: {columns}",
-    "NO_RESULTS": "No records found matching your search.",
-    "INVALID_FILE": "Unable to read file. Please check the file format.",
-}
-
-PLACEHOLDER_TEXTS = {
-    "USER_ID": "e.g., 264195 or user123",
-    "ADVERTISING_ID": "e.g., ad_12345",
-}
-
-TOOLTIPS = {
-    "LOAD_FILE": "Load Excel or CSV file",
-    "SEARCH": "Search records (Enter)",
-    "RESET": "Show all data (Esc)",
-    "SEARCH_AD": "Search by advertising ID (Enter)",
-}
-
-# ============================================================================
-# Utility Functions
-# ============================================================================
-
-
-def normalize_id_columns(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
-    """Normalize ID columns by filling NaN, converting to string, and stripping whitespace."""
+def normalize_id_columns(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
     for col in columns:
         if col in df.columns:
-            df[col] = df[col].fillna("").astype(str).str.strip()
+            df[col] = df[col].astype(str).str.strip()
     return df
 
 
-# ============================================================================
-# Data Loaders
-# ============================================================================
-
-
-@dataclass
-class ExcelData:
-    """Loader for My Chips Excel files."""
-
-    dataframe: Optional[pd.DataFrame] = None
-
-    FILE_COLUMNS = ["UserID", "Payout", "DateTime"]
-
-    def load(self, path: str) -> pd.DataFrame:
-        df = pd.read_excel(path)
-        missing = [col for col in self.FILE_COLUMNS if col not in df.columns]
-        if missing:
-            raise ValueError(f"Missing required columns: {', '.join(missing)}")
-
-        # Keep ALL columns from the original Excel file
-        # Extract app_id and user_id from UserID column by splitting on "-"
-        raw_user = df["UserID"].astype(str).str.strip()
-        df[ColumnNames.APP_ID] = raw_user.str.split("-").str[0].str.strip()
-        df[ColumnNames.USER_ID] = raw_user.str.split("-").str[1].str.strip()
-
-        # Rename payout and date columns
-        df.rename(columns={
-            "Payout": ColumnNames.PAYOUT,
-            "DateTime": ColumnNames.DATE,
-        }, inplace=True)
-
-        df[ColumnNames.PAYOUT] = pd.to_numeric(df[ColumnNames.PAYOUT], errors="coerce")
-        df[ColumnNames.DATE] = pd.to_datetime(df[ColumnNames.DATE], errors="coerce")
-
-        # Filter out numeric-only app_ids (keep only valid app names)
-        df = df[~df[ColumnNames.APP_ID].str.isdigit()].copy()
-
-        self.dataframe = df
-        return df
-
-
-@dataclass
-class PostbackData:
-    """Loader for Prime CSV files with postback parsing."""
-
-    dataframe: Optional[pd.DataFrame] = None
-
-    @staticmethod
-    def _extract_user_parts(raw_user: str) -> tuple[str, str]:
-        raw_user = (raw_user or "").strip()
-        if "-" in raw_user:
-            app_id, user_id = raw_user.split("-", 1)
-            return app_id.strip(), user_id.strip()
-        return "", raw_user
-
-    def _parse_postback_url(self, postback_url: str) -> dict:
-        parsed = urlparse(str(postback_url))
-        params = parse_qs(parsed.query)
-
-        raw_user = params.get("user", [""])[0]
-        payout = params.get("payout", [""])[0]
-        reward = params.get("reward", [""])[0]
-        offer_name = params.get("offer_name", [""])[0]
-        task_name = params.get("task_name", [""])[0]
-        status = params.get("status", [""])[0]
-        app = params.get("app", [""])[0]
-        advertising_id = params.get("advertising_id", [""])[0]
-        app_id, user_id = self._extract_user_parts(raw_user)
-
-        return {
-            ColumnNames.APP_ID: str(app_id).strip(),
-            ColumnNames.USER_ID: str(user_id).strip(),
-            ColumnNames.PAYOUT: pd.to_numeric(payout, errors="coerce"),
-            "reward": pd.to_numeric(reward, errors="coerce"),
-            "offer_name": unquote(offer_name),
-            "task_name": unquote(task_name),
-            "status": unquote(status),
-            "app": unquote(app),
-            ColumnNames.ADVERTISING_ID: str(advertising_id).strip(),
-        }
-
-    def load(self, path: str) -> pd.DataFrame:
-        df = pd.read_csv(path)
-        if ColumnNames.POSTBACK_URL not in df.columns:
-            raise ValueError("Missing required column: Postback URL")
-
-        parsed_df = df[ColumnNames.POSTBACK_URL].apply(self._parse_postback_url).apply(pd.Series)
-        df = pd.concat([df.copy(), parsed_df], axis=1)
-        df = normalize_id_columns(df, [ColumnNames.USER_ID, ColumnNames.APP_ID, ColumnNames.ADVERTISING_ID])
-
-        self.dataframe = df
-        return df
-
-
-# ============================================================================
-# Table Models
-# ============================================================================
-
-
-class DataModel(QAbstractTableModel):
-    """Table model for displaying DataFrame data."""
-
-    def __init__(self, dataframe: Optional[pd.DataFrame] = None) -> None:
-        super().__init__()
-        self._dataframe = pd.DataFrame() if dataframe is None else dataframe.copy()
-        self._numeric_columns = set()
-
-    def set_dataframe(self, dataframe: pd.DataFrame) -> None:
-        self.beginResetModel()
-        self._dataframe = dataframe.copy() if dataframe is not None else pd.DataFrame()
-        # Cache numeric column indices for performance
-        self._numeric_columns = {
-            i for i, dtype in enumerate(self._dataframe.dtypes)
-            if pd.api.types.is_numeric_dtype(dtype)
-        }
-        self.endResetModel()
-
-    def get_row_data(self, row: int) -> dict:
-        if 0 <= row < len(self._dataframe):
-            return self._dataframe.iloc[row].to_dict()
-        return {}
-
-    @property
-    def dataframe(self) -> pd.DataFrame:
-        return self._dataframe
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        if parent.isValid():
-            return 0
-        return len(self._dataframe)
-
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
-        if parent.isValid():
-            return 0
-        return len(self._dataframe.columns)
-
-    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
-        if not index.isValid() or self._dataframe.empty:
-            return None
-
-        value = self._dataframe.iat[index.row(), index.column()]
-
-        if role == Qt.DisplayRole:
-            if pd.isna(value):
-                return ""
-            if isinstance(value, pd.Timestamp):
-                return value.strftime("%Y-%m-%d %H:%M:%S")
-            if isinstance(value, float):
-                return f"{value:.6g}"
-            return str(value)
-
-        if role == Qt.TextAlignmentRole:
-            if index.column() in self._numeric_columns:
-                return Qt.AlignRight | Qt.AlignVCenter
-            return Qt.AlignLeft | Qt.AlignVCenter
-
+def clean_value(val):
+    """Safely clean extracted URL parameter values."""
+    if val is None:
         return None
+    val_str = str(val).strip()
+    if val_str == "" or val_str.lower() == "none":
+        return None
+    return val_str
 
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):  # noqa: N802
-        if role != Qt.DisplayRole:
-            return None
-        if orientation == Qt.Horizontal:
-            if section < len(self._dataframe.columns):
-                return str(self._dataframe.columns[section])
-            return ""
-        return str(section + 1)
-
-
-class SortFilterProxyModel(QSortFilterProxyModel):
-    """Advanced proxy model with column filtering support."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.user_id_query = ""
-        self.app_id_query = ALL_APPS_FILTER
-        self.advertising_id_query = ""
-        self._has_advertising_id = False
-        self._has_click_id = False
-        self.setFilterCaseSensitivity(Qt.CaseSensitive)
-        self.setSortCaseSensitivity(Qt.CaseInsensitive)
-        self.setDynamicSortFilter(True)
-
-    def setSourceModel(self, model: QAbstractTableModel) -> None:  # noqa: N802
-        super().setSourceModel(model)
-        if isinstance(model, DataModel):
-            self._has_advertising_id = ColumnNames.ADVERTISING_ID in model.dataframe.columns
-            self._has_click_id = ColumnNames.CLICK_ID in model.dataframe.columns
-
-    def update_user_search(self, user_id: str, app_id: str) -> None:
-        self.user_id_query = user_id.strip()
-        self.app_id_query = (app_id or ALL_APPS_FILTER).strip()
-        self.advertising_id_query = ""
-        self.invalidateFilter()
-
-    def update_advertising_search(self, advertising_id: str) -> None:
-        self.advertising_id_query = advertising_id.strip()
-        self.user_id_query = ""
-        self.app_id_query = ALL_APPS_FILTER
-        self.invalidateFilter()
-
-    def clear_filters(self) -> None:
-        self.user_id_query = ""
-        self.app_id_query = ALL_APPS_FILTER
-        self.advertising_id_query = ""
-        self.invalidateFilter()
-
-    def _get_source_value(self, row: int, column_name: str) -> str:
-        model = self.sourceModel()
-        if not isinstance(model, DataModel) or column_name not in model.dataframe.columns:
-            return ""
-        return str(model.dataframe.iloc[row][column_name]).strip()
-
-    def filterAcceptsRow(self, source_row: int, _source_parent: QModelIndex) -> bool:  # noqa: N802
-        model = self.sourceModel()
-        if not isinstance(model, DataModel) or model.dataframe.empty:
-            return False
-
-        if self.user_id_query:
-            row_user_id = self._get_source_value(source_row, ColumnNames.USER_ID)
-            if row_user_id != self.user_id_query:
-                return False
-
-            if self.app_id_query and self.app_id_query != ALL_APPS_FILTER:
-                row_app_id = self._get_source_value(source_row, ColumnNames.APP_ID)
-                return row_app_id == self.app_id_query
-            return True
-
-        if self.advertising_id_query:
-            if self._has_advertising_id:
-                row_advertising_id = self._get_source_value(source_row, ColumnNames.ADVERTISING_ID)
-            elif self._has_click_id:
-                row_advertising_id = self._get_source_value(source_row, ColumnNames.CLICK_ID)
-            else:
-                return False
-            return row_advertising_id == self.advertising_id_query
-
-        return True
-
-
-# ============================================================================
-# Table View
-# ============================================================================
-
-
-class DataTableView(QTableView):
-    """Professional Excel-like data table with enhanced UX."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setAlternatingRowColors(True)
-        self.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.setSortingEnabled(True)
-        self.setWordWrap(False)
-        self.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-        self.setShowGrid(True)
-
-        # Configure header
-        header = self.horizontalHeader()
-        header.setStretchLastSection(True)
-        header.setSectionResizeMode(QHeaderView.Interactive)
-        header.setSectionsMovable(True)
-        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-        # Configure vertical header
-        self.verticalHeader().setVisible(False)
-        self.verticalHeader().setDefaultSectionSize(UIConstants.ROW_HEIGHT)
-
-        # Double-click row to show details (handled by MainWindow)
-        # Avoid custom signal usage here to prevent crashes.
-        pass
-
-    def copy_selected_cell(self) -> None:
-        index = self.currentIndex()
-        if not index.isValid():
-            return
-        text = index.data(Qt.DisplayRole) or ""
-        QApplication.clipboard().setText(str(text))
-
-
-
-# ============================================================================
-# Main Application
-# ============================================================================
-
-
-class MainWindow(QMainWindow):
-    """Professional data analysis tool with production-level UX."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("User Inspector")
-        self.resize(UIConstants.WINDOW_WIDTH, UIConstants.WINDOW_HEIGHT)
-
-        # Initialize data loaders
-        self.excel_data = ExcelData()
-        self.postback_data = PostbackData()
-
-        # Initialize models
-        self.model = DataModel()
-        self.proxy = SortFilterProxyModel()
-        self.proxy.setSourceModel(self.model)
-
-        # Data storage
-        self.original_df = pd.DataFrame()
-        self.is_file_loaded = False
-
-        # Initialize UI - create all elements ONCE
-        self._build_ui()
-        self._apply_styles()
-        self._setup_shortcuts()
-        self._setup_empty_state()
-
-    def _setup_empty_state(self) -> None:
-        """Setup initial empty state."""
-        self.is_file_loaded = False
-        self._update_status_message()
-
-    def _build_ui(self) -> None:
-        """Build the entire UI (called ONCE during init)."""
-        central = QWidget()
-        self.setCentralWidget(central)
-
-        root = QVBoxLayout(central)
-        root.setContentsMargins(*UIConstants.ROOT_MARGINS)
-        root.setSpacing(14)
-
-        # Build all sections
-        root.addLayout(self._build_top_bar_layout(), 0)
-        root.addLayout(self._build_search_layout(), 0)
-        root.addWidget(self._build_table_frame(), 1)
-        root.addLayout(self._build_footer_layout(), 0)
-
-        # Setup copy shortcut
-        copy_shortcut = QShortcut(QKeySequence("Ctrl+C"), self.table)
-        copy_shortcut.activated.connect(self.table.copy_selected_cell)
-
-    def _build_top_bar_layout(self) -> QHBoxLayout:
-        """Build top navigation bar layout."""
-        layout = QHBoxLayout()
-        layout.setContentsMargins(*UIConstants.SECTION_MARGINS)
-        layout.setSpacing(UIConstants.SECTION_SPACING)
-
-        # App title
-        title = QLabel("User Inspector")
-        title.setObjectName("AppTitle")
-
-        # Mode selector
-        mode_label = QLabel("Source:")
-        mode_label.setProperty("weight", "bold")
-
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems([mode.value for mode in FileSourceMode])
-        self.mode_combo.setMinimumWidth(120)
-        self.mode_combo.setMaximumWidth(150)
-
-        # Load file button
-        self.load_button = QPushButton("Load File")
-        self.load_button.setProperty("kind", "primary")
-        self.load_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.load_button.setToolTip(TOOLTIPS["LOAD_FILE"] + " (Ctrl+O)")
-        self.load_button.clicked.connect(self.load_file)
-
-        layout.addWidget(title)
-        layout.addSpacing(20)
-        layout.addWidget(mode_label)
-        layout.addWidget(self.mode_combo)
-        layout.addStretch()
-        layout.addWidget(self.load_button)
-
-        return layout
-
-    def _build_search_layout(self) -> QVBoxLayout:
-        """Build search and filter panel layout."""
-        layout = QVBoxLayout()
-        layout.setContentsMargins(*UIConstants.SECTION_MARGINS)
-        layout.setSpacing(10)
-
-        # ========== User ID Search Row ==========
-        user_row = QHBoxLayout()
-        user_row.setSpacing(UIConstants.SECTION_SPACING)
-
-        user_label = QLabel("Search by User ID:")
-        user_label.setProperty("weight", "bold")
-        user_label.setMinimumWidth(120)
-
-        self.user_id_input = QLineEdit()
-        self.user_id_input.setPlaceholderText(PLACEHOLDER_TEXTS["USER_ID"])
-        self.user_id_input.setMinimumHeight(UIConstants.INPUT_HEIGHT)
-        self.user_id_input.returnPressed.connect(self.apply_user_search)
-
-        app_label = QLabel("Filter by App:")
-        app_label.setProperty("weight", "bold")
-
-        self.app_selector = QComboBox()
-        self.app_selector.addItem(ALL_APPS_FILTER)
-        self.app_selector.setMinimumHeight(UIConstants.INPUT_HEIGHT)
-
-        self.user_search_button = QPushButton("Search")
-        self.user_search_button.setProperty("kind", "primary")
-        self.user_search_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.user_search_button.setToolTip(TOOLTIPS["SEARCH"])
-        self.user_search_button.clicked.connect(self.apply_user_search)
-
-        self.reset_button = QPushButton("Reset")
-        self.reset_button.setProperty("kind", "secondary")
-        self.reset_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.reset_button.setToolTip(TOOLTIPS["RESET"] + " (Esc)")
-        self.reset_button.clicked.connect(self.reset_view)
-
-        user_row.addWidget(user_label)
-        user_row.addWidget(self.user_id_input, 2)
-        user_row.addWidget(app_label)
-        user_row.addWidget(self.app_selector, 1)
-        user_row.addWidget(self.user_search_button)
-        user_row.addWidget(self.reset_button)
-
-        # ========== Advertising ID Search Row ==========
-        ad_row = QHBoxLayout()
-        ad_row.setSpacing(UIConstants.SECTION_SPACING)
-
-        ad_label = QLabel("Search by Advertising ID:")
-        ad_label.setProperty("weight", "bold")
-        ad_label.setMinimumWidth(150)
-
-        self.advertising_id_input = QLineEdit()
-        self.advertising_id_input.setPlaceholderText(PLACEHOLDER_TEXTS["ADVERTISING_ID"])
-        self.advertising_id_input.setMinimumHeight(UIConstants.INPUT_HEIGHT)
-        self.advertising_id_input.returnPressed.connect(self.apply_advertising_search)
-
-        self.advertising_search_button = QPushButton("Search")
-        self.advertising_search_button.setProperty("kind", "primary")
-        self.advertising_search_button.setMinimumHeight(UIConstants.BUTTON_HEIGHT)
-        self.advertising_search_button.setToolTip(TOOLTIPS["SEARCH_AD"])
-        self.advertising_search_button.clicked.connect(self.apply_advertising_search)
-
-        ad_row.addWidget(ad_label)
-        ad_row.addWidget(self.advertising_id_input, 3)
-        ad_row.addWidget(self.advertising_search_button)
-        ad_row.addStretch()
-
-        layout.addLayout(user_row)
-        layout.addLayout(ad_row)
-
-        return layout
-
-    def _build_table_frame(self) -> QFrame:
-        """Build the main table frame."""
-        frame = QFrame()
-        frame.setObjectName("TableFrame")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self.table = DataTableView()
-        self.table.setModel(self.proxy)
-        self.table.selectionModel().selectionChanged.connect(self._update_status)
-        self.table.doubleClicked.connect(self._on_row_double_click)
-
-        layout.addWidget(self.table)
-        return frame
-
-    def _build_footer_layout(self) -> QHBoxLayout:
-        """Build the footer status bar layout."""
-        layout = QHBoxLayout()
-        layout.setContentsMargins(*UIConstants.FOOTER_MARGINS)
-        layout.setSpacing(UIConstants.SECTION_SPACING)
-
-        self.row_count_label = QLabel("Ready")
-        self.row_count_label.setProperty("weight", "bold")
-
-        self.filter_summary_label = QLabel("Load a file to begin")
-        self.filter_summary_label.setProperty("style", "info")
-
-        self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-        layout.addWidget(self.row_count_label)
-        layout.addSpacing(20)
-        layout.addWidget(self.filter_summary_label, 1)
-        layout.addWidget(self.status_label)
-
-        return layout
-
-    def _setup_shortcuts(self) -> None:
-        """Setup keyboard shortcuts."""
-        # Ctrl+O to load file
-        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self.load_file)
-        # Esc to reset
-        QShortcut(QKeySequence("Escape"), self).activated.connect(self.reset_view)
-
-    def _apply_styles(self) -> None:
-        """Apply comprehensive styling."""
-        stylesheet = f"""
-            QMainWindow {{
-                background-color: {UIColors.BG_MAIN};
-            }}
-
-            QFrame {{
-                background: {UIColors.BG_CARD};
-                border: 1px solid {UIColors.BORDER_LIGHT};
-                border-radius: 8px;
-            }}
-
-            QLabel {{
-                color: {UIColors.TEXT_SECONDARY};
-                font-size: 12px;
-            }}
-
-            QLabel[weight="bold"] {{
-                font-weight: 600;
-                color: {UIColors.TEXT_PRIMARY};
-            }}
-
-            QLabel[style="info"] {{
-                color: {UIColors.INFO};
-                font-weight: 500;
-            }}
-
-            QLabel#AppTitle {{
-                font-size: 20px;
-                font-weight: 600;
-                color: {UIColors.TEXT_PRIMARY};
-            }}
-
-            QLineEdit, QComboBox {{
-                background: {UIColors.BG_CARD};
-                color: {UIColors.TEXT_PRIMARY};
-                border: 1px solid {UIColors.BORDER_INPUT};
-                border-radius: 6px;
-                padding: 8px 10px;
-                font-size: 12px;
-                selection-background-color: {UIColors.TABLE_SELECTED};
-            }}
-
-            QLineEdit:hover, QComboBox:hover {{
-                border: 1px solid {UIColors.PRIMARY_BUTTON};
-            }}
-
-            QLineEdit:focus, QComboBox:focus {{
-                border: 2px solid {UIColors.PRIMARY_BUTTON};
-                padding: 7px 9px;
-                background-color: #fafbff;
-            }}
-
-            QPushButton[kind="primary"] {{
-                background-color: {UIColors.PRIMARY_BUTTON};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 600;
-                font-size: 12px;
-            }}
-
-            QPushButton[kind="primary"]:hover {{
-                background-color: {UIColors.PRIMARY_BUTTON_HOVER};
-            }}
-
-            QPushButton[kind="primary"]:pressed {{
-                background-color: {UIColors.PRIMARY_BUTTON_ACTIVE};
-            }}
-
-            QPushButton[kind="secondary"] {{
-                background-color: {UIColors.SECONDARY_BUTTON};
-                color: {UIColors.SECONDARY_BUTTON_TEXT};
-                border: 1px solid {UIColors.BORDER_INPUT};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-                font-size: 12px;
-            }}
-
-            QPushButton[kind="secondary"]:hover {{
-                background-color: #e9ecef;
-                border: 1px solid #adb5bd;
-            }}
-
-            QPushButton:disabled {{
-                background-color: {UIColors.DISABLED_BG};
-                color: {UIColors.TEXT_MUTED};
-                border: 1px solid transparent;
-            }}
-
-            QTableView {{
-                background-color: {UIColors.BG_CARD};
-                alternate-background-color: {UIColors.TABLE_ALTERNATE};
-                gridline-color: {UIColors.TABLE_GRID};
-                border: none;
-                outline: none;
-            }}
-
-            QTableView::item {{
-                padding: 6px 8px;
-                color: {UIColors.TEXT_PRIMARY};
-            }}
-
-            QTableView::item:hover {{
-                background-color: {UIColors.TABLE_HOVER};
-            }}
-
-            QTableView::item:selected {{
-                background-color: {UIColors.TABLE_SELECTED};
-                color: white;
-                font-weight: 500;
-            }}
-
-            QHeaderView::section {{
-                background-color: {UIColors.TABLE_HEADER_BG};
-                color: {UIColors.TABLE_HEADER_TEXT};
-                border: none;
-                border-bottom: 1px solid {UIColors.TABLE_HEADER_BORDER};
-                border-right: 1px solid {UIColors.TABLE_HEADER_BORDER};
-                padding: 8px 10px;
-                font-size: 11px;
-                font-weight: 600;
-                text-align: left;
-            }}
-
-            QHeaderView::section:hover {{
-                background-color: #e8eaed;
-            }}
-
-            QScrollBar:vertical {{
-                width: 10px;
-                background: transparent;
-            }}
-
-            QScrollBar::handle:vertical {{
-                background: {UIColors.BORDER_INPUT};
-                border-radius: 5px;
-                min-height: 20px;
-            }}
-
-            QScrollBar::handle:vertical:hover {{
-                background: {UIColors.BORDER_LIGHT};
-            }}
-
-            QScrollBar:horizontal {{
-                height: 10px;
-                background: transparent;
-            }}
-
-            QScrollBar::handle:horizontal {{
-                background: {UIColors.BORDER_INPUT};
-                border-radius: 5px;
-                min-width: 20px;
-            }}
-
-            QScrollBar::handle:horizontal:hover {{
-                background: {UIColors.BORDER_LIGHT};
-            }}
+
+def extract_ids(value):
+    if not isinstance(value, str):
+        return None, None
+
+    value = value.strip()
+    if "-" not in value:
+        return None, None
+
+    parts = value.split("-", 1)
+    if len(parts) != 2:
+        return None, None
+
+    return parts[0], parts[1]
+
+
+def load_my_chips(df: pd.DataFrame) -> pd.DataFrame:
+    if "UserID" not in df.columns:
+        raise ValueError("Missing required column: UserID")
+
+    df = df.copy()
+    df["app_id"], df["user_id"] = zip(*df["UserID"].apply(extract_ids))
+
+    df = normalize_id_columns(df, ["app_id", "user_id"])
+    df = df[(df["app_id"] != "") & (df["user_id"] != "")]
+    return df
+
+
+def extract_user_info(postback_url: str) -> Dict[str, str]:
+    parsed = urlparse(str(postback_url))
+    params = parse_qs(parsed.query)
+
+    raw_user = params.get("user", [""])[0]
+    raw_user = str(raw_user).strip()
+
+    app_id = ""
+    user_id = ""
+    if "-" in raw_user:
+        parts = raw_user.split("-", 1)
+        app_id = parts[0].strip()
+        user_id = parts[1].strip()
+    else:
+        user_id = raw_user
+
+    offer_name = clean_value(params.get("offer_name", [""])[0])
+    task_name = clean_value(params.get("task_name", [""])[0])
+
+    return {
+        "app_id": app_id,
+        "user_id": user_id,
+        "raw_user": raw_user,
+        "offer_name": offer_name,
+        "task_name": task_name,
+    }
+
+
+def load_prime(df: pd.DataFrame) -> pd.DataFrame:
+    if "Postback URL" not in df.columns:
+        raise ValueError("Missing required column: Postback URL")
+
+    df = df.copy()
+    parsed = df["Postback URL"].apply(extract_user_info).apply(pd.Series)
+    df = pd.concat([df, parsed], axis=1)
+
+    df = normalize_id_columns(df, ["app_id", "user_id"])
+    df = df[(df["app_id"] != "") & (df["user_id"] != "")]
+    
+    # Clean and normalize offer_name and task_name
+    if "offer_name" in df.columns:
+        df["offer_name"] = df["offer_name"].fillna("—")
+    if "task_name" in df.columns:
+        df["task_name"] = df["task_name"].fillna("—")
+    
+    return df
+
+
+
+
+def run_search(
+    df: pd.DataFrame,
+    user_id_query: str,
+    app_filter: str,
+) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    filtered = df.copy()
+
+    if user_id_query:
+        val = str(user_id_query).strip()
+        filtered["user_id"] = filtered.get("user_id", pd.Series(dtype=str)).astype(str).str.strip()
+        filtered = filtered[filtered["user_id"] == val]
+
+    if app_filter and app_filter != "All":
+        val = str(app_filter).strip()
+        filtered["app_id"] = filtered.get("app_id", pd.Series(dtype=str)).astype(str).str.strip()
+        filtered = filtered[filtered["app_id"] == val]
+
+    return filtered
+
+
+def render_header() -> None:
+    """Render the header section."""
+    st.markdown(
         """
+        <div style="padding: 2rem 0; text-align: center;">
+            <h1 style="margin: 0; font-size: 2.5rem; color: #1f2937; font-weight: 700;">
+                🔍 User Inspector
+            </h1>
+            <p style="margin: 0.5rem 0 0 0; font-size: 1rem; color: #6b7280;">
+                Analyze user activity from your uploaded data
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.divider()
 
-        self.setStyleSheet(stylesheet)
 
-    def show_error(self, message: str) -> None:
-        QMessageBox.critical(self, "Error", message)
+def render_preview_card(df: pd.DataFrame) -> None:
+    """Render the data preview section."""
+    st.markdown("### 📊 Step 2: Preview Data")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total Rows", f"{len(df):,}")
+    with col2:
+        st.metric("Total Columns", len(df.columns))
+    with col3:
+        row_estimate = f"{len(df) * 0.0001:.1f}MB" if len(df) > 0 else "0MB"
+        st.metric("Data Size", row_estimate)
 
-    def show_info(self, message: str) -> None:
-        QMessageBox.information(self, "Info", message)
 
-    def _update_status_message(self) -> None:
-        """Update status message based on state."""
-        if not self.is_file_loaded:
-            self.filter_summary_label.setText("Load a file to begin")
-            self.row_count_label.setText("Ready")
-            return
-
-        if self.proxy.rowCount() == 0:
-            self.filter_summary_label.setText("No results found")
-            self.row_count_label.setText("Showing 0 records")
-        else:
-            total = len(self.model.dataframe)
-            displayed = self.proxy.rowCount()
-            if total == displayed:
-                self.row_count_label.setText(f"Showing {displayed:,} records")
-                self.filter_summary_label.setText("Filters: none active")
-            else:
-                self.row_count_label.setText(f"Showing {displayed:,} of {total:,} records")
-                self.filter_summary_label.setText(f"Filters: {self._filter_summary_text()}")
-
-    def _set_loading_state(self, is_loading: bool) -> None:
-        """Set UI state during file loading."""
-        buttons = [
-            "load_button", "user_search_button", "advertising_search_button",
-            "reset_button", "mode_combo", "app_selector", "user_id_input", "advertising_id_input"
-        ]
-
-        for btn_name in buttons:
-            if hasattr(self, btn_name):
-                getattr(self, btn_name).setDisabled(is_loading)
-
-        if is_loading:
-            self.row_count_label.setText("Loading...")
-            QApplication.setOverrideCursor(Qt.WaitCursor)
-        else:
-            if self.is_file_loaded:
-                self._update_status_message()
-            QApplication.restoreOverrideCursor()
-
-    def _populate_app_selector(self, df: pd.DataFrame) -> None:
-        """Populate app selector dropdown."""
-        self.app_selector.clear()
-        self.app_selector.addItem(ALL_APPS_FILTER)
-
-        if ColumnNames.APP_ID not in df.columns:
-            return
-
-        unique_apps = sorted(df[ColumnNames.APP_ID].dropna().unique())[:1000]
-        self.app_selector.addItems(unique_apps)
-
-    def _find_click_column(self, df: pd.DataFrame) -> Optional[str]:
-        """Find first column containing 'click' (case-insensitive)."""
-        for col in df.columns:
-            if "click" in str(col).lower():
-                return col
-        return None
-
-    def _get_file_path(self, mode: FileSourceMode) -> str:
-        """Get file path from user."""
-        file_types = {
-            FileSourceMode.MY_CHIPS: "Excel Files (*.xlsx);;All Files (*)",
-            FileSourceMode.PRIME: "CSV Files (*.csv);;All Files (*)",
-        }
-        dialog_names = {
-            FileSourceMode.MY_CHIPS: "Load My Chips Data File",
-            FileSourceMode.PRIME: "Load Prime CSV File",
-        }
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, dialog_names[mode], "", file_types[mode]
-        )
-        return file_path
-
-    def load_file(self) -> None:
-        """Load a data file."""
-        mode_text = self.mode_combo.currentText()
-        mode = FileSourceMode(mode_text)
-        file_path = self._get_file_path(mode)
-
-        if not file_path:
-            return
-
-        loading = QProgressDialog("Processing file...", None, 0, 0, self)
-        loading.setWindowTitle("Loading")
-        loading.setWindowModality(Qt.WindowModal)
-        loading.setCancelButton(None)
-        loading.show()
-
-        self._set_loading_state(True)
-        QApplication.processEvents()
-
-        try:
-            df = (
-                self.excel_data.load(file_path)
-                if mode == FileSourceMode.MY_CHIPS
-                else self.postback_data.load(file_path)
+def render_search_controls(app_options: List[str]) -> tuple:
+    """Render search controls. Returns (user_id, app_filter, search_clicked, reset_clicked)."""
+    st.markdown("### 🔎 Step 3: Search & Filter")
+    
+    with st.container():
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            user_id_input = st.text_input(
+                label="User ID",
+                placeholder="e.g., 264195",
+                help="Enter the user ID to search for"
             )
-            # Data cleaning for My Chips advertising ID mapping
-            if mode == FileSourceMode.MY_CHIPS and ColumnNames.CLICK_ID in df.columns:
-                df[ColumnNames.CLICK_ID] = df[ColumnNames.CLICK_ID].astype(str).str.strip()
+        
+        with col2:
+            app_choice = st.selectbox(
+                label="App",
+                options=app_options,
+                help="Filter results by app (optional)"
+            )
+        
+        col_search, col_reset, col_spacer = st.columns([1, 1, 3])
+        
+        with col_search:
+            search_button = st.button(
+                "🔍 Search",
+                use_container_width=True,
+                type="primary",
+                key="search_button_main"
+            )
+        
+        with col_reset:
+            reset_button = st.button(
+                "↻ Reset",
+                use_container_width=True,
+                key="reset_button_main"
+            )
+        
+        return user_id_input, app_choice, search_button, reset_button
 
-            df = df.reset_index(drop=True)
 
-            self.original_df = df.copy()
-            self.model.set_dataframe(df)
-            self.proxy.clear_filters()
-            self.user_id_input.clear()
-            self.advertising_id_input.clear()
-            self.is_file_loaded = True
+def get_display_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare dataframe for display based on dataset type."""
+    display_df = df.copy()
+    display_df.columns = display_df.columns.str.strip()
+    
+    # Check if this is Prime data (has Postback URL column)
+    is_prime = "Postback URL" in display_df.columns
+    
+    if is_prime:
+        # Define visible columns for Prime dataset
+        visible_columns = [
+            "App",
+            "user_id",
+            "app_id",
+            "Datetime",
+            "Reward",
+            "Payout",
+            "Type",
+            "offer_name",
+            "task_name"
+        ]
+        
+        # Filter only existing columns
+        display_df = display_df[[col for col in visible_columns if col in display_df.columns]]
+        
+        # Reindex to ensure correct order (fill missing columns)
+        display_df = display_df.reindex(columns=visible_columns, fill_value="")
+    else:
+        # My Chips dataset - use column mapping for variations
+        column_mapping = {
+            "DateTime": ["DateTime", "Datetime", "date"],
+            "Payout": ["Payout", "payout"],
+            "Country": ["Country", "country"],
+            "EventName": ["EventName", "event_name", "type"],
+            "AppName": ["AppName", "app", "App"]
+        }
+        
+        def get_column(df, possible_names):
+            for name in possible_names:
+                if name in df.columns:
+                    return name
+            return None
+        
+        # Build display columns with fallback mapping
+        display_columns = {
+            "user_id": "user_id" if "user_id" in display_df.columns else None,
+            "app_id": "app_id" if "app_id" in display_df.columns else None,
+            "DateTime": get_column(display_df, column_mapping["DateTime"]),
+            "Payout": get_column(display_df, column_mapping["Payout"]),
+            "Country": get_column(display_df, column_mapping["Country"]),
+            "EventName": get_column(display_df, column_mapping["EventName"]),
+            "AppName": get_column(display_df, column_mapping["AppName"]),
+        }
+        
+        # Create display dataframe with only mapped columns
+        my_chips_display = pd.DataFrame()
+        for key, col in display_columns.items():
+            if col and col in display_df.columns:
+                my_chips_display[key] = display_df[col]
+            else:
+                my_chips_display[key] = ""
+        
+        display_df = my_chips_display
+    
+    return display_df
 
-            print(f"✓ Successfully loaded {len(df):,} records")
 
-            self._populate_app_selector(df)
-            self._autosize_columns()
-            self._update_status_message()
+def render_results(filtered_df: pd.DataFrame, original_df: pd.DataFrame, user_id_query: str, app_filter: str) -> None:
+    """Render the results section."""
+    st.markdown("### 📈 Step 4: Analysis Results")
+    
+    # Show active filters
+    if user_id_query or (app_filter and app_filter != "All"):
+        filter_text = []
+        if user_id_query:
+            filter_text.append(f"<strong>User ID</strong> = {user_id_query}")
+        if app_filter and app_filter != "All":
+            filter_text.append(f"<strong>App</strong> = {app_filter}")
+        
+        st.markdown(
+            f"""
+            <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.375rem;">
+                <small style="color: #1e40af;">Active Filters: {' • '.join(filter_text)}</small>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    
+    # Show statistics
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Matching Rows", f"{len(filtered_df):,}")
+    with col2:
+        match_pct = (len(filtered_df) / len(original_df) * 100) if len(original_df) > 0 else 0
+        st.metric("Match %", f"{match_pct:.1f}%")
+    with col3:
+        st.metric("Total Dataset", f"{len(original_df):,}")
+    
+    # Display results
+    if filtered_df.empty:
+        st.markdown(
+            """
+            <div style="background: #fef2f2; border-left: 4px solid #ef4444; padding: 1rem; margin: 1rem 0; border-radius: 0.375rem; text-align: center; color: #7f1d1d;">
+                <strong>No results found</strong>
+                <br>
+                <small>Try adjusting your search filters</small>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("**Data Table** (scroll right for more columns)")
+        
+        # Prepare display dataframe
+        display_df = get_display_df(filtered_df)
+        
+        # Display with custom styling
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            height=400
+        )
+        
+        # Download option
+        csv = display_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Results (CSV)",
+            data=csv,
+            file_name=f"user_inspector_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv"
+        )
 
-        except Exception as exc:
-            self.is_file_loaded = False
-            self.show_error(f"{ERROR_MESSAGES.get('INVALID_FILE', 'Error')}\n{str(exc)}")
-        finally:
-            loading.close()
-            self._set_loading_state(False)
 
-    def apply_user_search(self) -> None:
-        """Search by user ID."""
-        if not self.is_file_loaded:
-            self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
-            return
-
-        user_id = self.user_id_input.text().strip()
-        if not user_id:
-            self.show_error(ERROR_MESSAGES["USER_ID_REQUIRED"])
-            return
-
-        selected_app = self.app_selector.currentText()
-        self.advertising_id_input.clear()
-        self.proxy.update_user_search(user_id=user_id, app_id=selected_app)
-        self._update_status_message()
-
-    def apply_advertising_search(self) -> None:
-        """Search by advertising ID."""
-        if not self.is_file_loaded:
-            self.show_error(ERROR_MESSAGES["FILE_NOT_LOADED"])
-            return
-
-        mode_text = self.mode_combo.currentText()
-        mode = FileSourceMode(mode_text)
-
-        advertising_id = str(self.advertising_id_input.text()).strip()
-        if not advertising_id:
-            self.show_error(ERROR_MESSAGES["ADVERTISING_ID_REQUIRED"])
-            return
-
-        self.user_id_input.clear()
-        self.app_selector.setCurrentText(ALL_APPS_FILTER)
-
-        if mode == FileSourceMode.PRIME:
-            if ColumnNames.ADVERTISING_ID not in self.model.dataframe.columns:
-                self.show_error(ERROR_MESSAGES["ADVERTISING_ID_NOT_FOUND"])
-                return
-
-            self.proxy.update_advertising_search(advertising_id)
-            self._update_status_message()
-            return
-
-        # MY_CHIPS path
-        click_col = self._find_click_column(self.original_df)
-        if click_col is None:
-            self.show_error(ERROR_MESSAGES["ADVERTISING_ID_NOT_FOUND"])
-            return
-
-        normalized_value = advertising_id.lower()
-        self.original_df[click_col] = self.original_df[click_col].astype(str).str.strip().str.lower()
-
-        print("Using column:", click_col)
-        print("Input:", normalized_value)
-        print("Sample values:", self.original_df[click_col].head(5).tolist())
-
-        filtered_df = self.original_df[self.original_df[click_col] == normalized_value]
-        if filtered_df.empty:
-            filtered_df = self.original_df[self.original_df[click_col].str.contains(normalized_value, na=False)]
-
-        self.model.set_dataframe(filtered_df.reset_index(drop=True))
-        self.proxy.clear_filters()
-        self._update_status_message()
-
-    def reset_view(self) -> None:
-        """Reset to show all data."""
-        if not self.is_file_loaded:
-            return
-
-        self.model.set_dataframe(self.original_df)
-        self.proxy.clear_filters()
-        self.user_id_input.clear()
-        self.advertising_id_input.clear()
-        self.app_selector.setCurrentText(ALL_APPS_FILTER)
-        self._update_status_message()
-
-    def _autosize_columns(self) -> None:
-        """Auto-size table columns."""
-        self.table.resizeColumnsToContents()
-        header = self.table.horizontalHeader()
-        for idx in range(header.count()):
-            width = self.table.columnWidth(idx)
-            if width > UIConstants.MAX_COLUMN_WIDTH:
-                self.table.setColumnWidth(idx, UIConstants.MAX_COLUMN_WIDTH)
-
-    def _filter_summary_text(self) -> str:
-        """Generate filter summary text."""
-        if not self.proxy.user_id_query and not self.proxy.advertising_id_query:
-            return "none"
-
-        if self.proxy.user_id_query:
-            if self.proxy.app_id_query == ALL_APPS_FILTER:
-                return f"user_id = '{self.proxy.user_id_query}'"
-            return f"user_id = '{self.proxy.user_id_query}' & app = '{self.proxy.app_id_query}'"
-
-        return f"ad_id = '{self.proxy.advertising_id_query}'"
-
-    def _on_row_double_click(self, index: QModelIndex) -> None:
-        """Handle row double click without custom signal."""
-        if not index.isValid():
-            return
-
-        source_index = self.proxy.mapToSource(index)
-        if not source_index.isValid():
-            return
-
-        row = source_index.row()
-        data = self.model.get_row_data(row)
-        self.show_row_details(data)
-
-    def show_row_details(self, data: dict) -> None:
-        """Show a row detail popup."""
-        if not data:
-            return
-
-        message = "\n".join([f"{k}: {v}" for k, v in data.items()])
-        QMessageBox.information(self, "Row Details", message)
-
-    def _update_status(self) -> None:
-        """Update status bar with selected cell info."""
-        index = self.table.currentIndex()
-        if not index.isValid():
-            self.status_label.setText("")
-            return
-
-        header = self.model.headerData(index.column(), Qt.Horizontal)
-        value = index.data(Qt.DisplayRole)
-        self.status_label.setText(f"[{header}]: {value}")
+def configure_page() -> None:
+    """Configure Streamlit page settings."""
+    st.set_page_config(
+        page_title="User Inspector",
+        page_icon="🔍",
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
+    
+    # Custom CSS for modern styling
+    st.markdown(
+        """
+        <style>
+        /* Global Styles */
+        :root {
+            --primary-color: #3b82f6;
+            --success-color: #22c55e;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --background: #f9fafb;
+            --text-primary: #1f2937;
+            --text-secondary: #6b7280;
+            --border: #e5e7eb;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+            color: var(--text-primary);
+            background-color: var(--background);
+        }
+        
+        /* Remove top padding */
+        .main {
+            padding-top: 1rem;
+        }
+        
+        /* Card styling */
+        [data-testid="stContainer"] {
+            background-color: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        
+        /* Button styling */
+        .stButton > button {
+            border-radius: 0.375rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            border: none;
+            padding: 0.5rem 1rem;
+        }
+        
+        .stButton > button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .stButton > button[kind="primary"] {
+            background-color: var(--primary-color) !important;
+            color: white !important;
+        }
+        
+        .stButton > button[kind="secondary"] {
+            background-color: var(--text-secondary) !important;
+            color: white !important;
+        }
+        
+        /* Input field styling */
+        .stTextInput > div > div > input,
+        .stSelectbox > div > div > select {
+            border: 1px solid var(--border);
+            border-radius: 0.375rem;
+            padding: 0.5rem 0.75rem;
+            font-size: 0.95rem;
+        }
+        
+        .stTextInput > div > div > input:focus,
+        .stSelectbox > div > div > select:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        /* Metric styling */
+        [data-testid="metric-container"] {
+            background-color: #f3f4f6;
+            border-radius: 0.375rem;
+            padding: 1rem;
+        }
+        
+        /* Dataframe styling */
+        [data-testid="stDataFrame"] {
+            border-radius: 0.375rem;
+            border: 1px solid var(--border);
+        }
+        
+        /* Headers */
+        h1, h2, h3 {
+            color: var(--text-primary);
+            font-weight: 700;
+        }
+        
+        h3 {
+            margin-top: 1.5rem;
+            margin-bottom: 1rem;
+            font-size: 1.25rem;
+        }
+        
+        /* Divider */
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 1rem 0;
+        }
+        
+        /* Info/Warning/Error boxes */
+        .stAlert {
+            border-radius: 0.375rem;
+            border-left: 4px solid;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def main() -> None:
-    import warnings
-    import os
-
-    # Suppress warnings
-    os.environ['QT_QPA_PLATFORM_PLUGIN_PATH'] = ''
-    warnings.filterwarnings('ignore')
-
-    app = QApplication(sys.argv)
-
-    # Apply qt-material theme if available
-    if HAS_QT_MATERIAL:
+    """Main application entry point."""
+    configure_page()
+    
+    # Initialize session state
+    if "original_df" not in st.session_state:
+        st.session_state.original_df = pd.DataFrame()
+    if "filtered_df" not in st.session_state:
+        st.session_state.filtered_df = pd.DataFrame()
+    if "file_loaded" not in st.session_state:
+        st.session_state.file_loaded = False
+    if "current_file_name" not in st.session_state:
+        st.session_state.current_file_name = None
+    
+    # Render header
+    render_header()
+    
+    # Step 1: Upload
+    with st.container():
+        st.markdown("### 📤 Step 1: Upload Data")
+        
+        uploaded_file = st.file_uploader(
+            label="Drop or select .xlsx or .csv file",
+            type=["xlsx", "csv"],
+            key="file_uploader_main"
+        )
+        
+        if uploaded_file is not None:
+            # Display file info
+            file_size_kb = uploaded_file.size / 1024
+            st.markdown(
+                f"""
+                <div style="background: #f0fdf4; border-left: 4px solid #22c55e; padding: 0.75rem; margin: 0.5rem 0; border-radius: 0.375rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem;">
+                        <span style="color: #22c55e; font-size: 1.2rem;">✓</span>
+                        <div>
+                            <strong style="color: #166534;">{uploaded_file.name}</strong>
+                            <br>
+                            <small style="color: #4ade80;">{file_size_kb:.1f} KB</small>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                """
+                <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 1rem; margin: 1rem 0; border-radius: 0.375rem; text-align: center; color: #92400e;">
+                    <p style="margin: 0;"><strong>Upload a file to begin</strong></p>
+                    <small>Supports Excel (.xlsx) and CSV (.csv) formats</small>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            return
+    
+    # File has been uploaded
+    file_name = uploaded_file.name.lower()
+    
+    # Load file if not already loaded or file changed
+    if (not st.session_state.file_loaded or 
+        st.session_state.current_file_name != file_name):
         try:
-            apply_stylesheet(app, theme='light_blue.xml', invert_secondary=False)
-        except Exception:
-            pass
-
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec_())
+            with st.spinner("Loading file..."):
+                if file_name.endswith(".csv"):
+                    df_raw = pd.read_csv(uploaded_file)
+                    df = load_prime(df_raw)
+                elif file_name.endswith(".xlsx"):
+                    df_raw = pd.read_excel(uploaded_file, engine="openpyxl")
+                    df = load_my_chips(df_raw)
+                else:
+                    st.error("Unsupported file type")
+                    return
+                
+                st.session_state.original_df = df
+                st.session_state.filtered_df = df
+                st.session_state.file_loaded = True
+                st.session_state.current_file_name = file_name
+            
+            # Show success message
+            st.success(f"✓ File loaded successfully! Ready to search.")
+        
+        except Exception as e:
+            st.error(f"❌ Error loading file: {str(e)}")
+            st.session_state.original_df = pd.DataFrame()
+            st.session_state.filtered_df = pd.DataFrame()
+            st.session_state.file_loaded = False
+            return
+    
+    if st.session_state.original_df.empty:
+        st.info("No data available after parsing.")
+        return
+    
+    # Step 2: Preview
+    render_preview_card(st.session_state.original_df)
+    
+    # Step 3: Search Controls
+    app_options = ["All"] + sorted(
+        st.session_state.original_df["app_id"].dropna().astype(str).unique().tolist()
+    )
+    user_id_input, app_choice, search_button, reset_button = render_search_controls(app_options)
+    
+    # Handle search/reset
+    if reset_button:
+        st.session_state.filtered_df = st.session_state.original_df.copy()
+        st.rerun()
+    
+    if search_button:
+        st.session_state.filtered_df = run_search(
+            st.session_state.original_df,
+            user_id_query=user_id_input,
+            app_filter=app_choice,
+        )
+        st.rerun()
+    
+    # Step 4: Results
+    render_results(
+        st.session_state.filtered_df,
+        st.session_state.original_df,
+        user_id_input,
+        app_choice
+    )
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        # This will show crash info when launched from terminal for debugging.
-        print("Fatal error:", e)
-        raise
+    main()
