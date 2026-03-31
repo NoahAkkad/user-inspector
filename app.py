@@ -177,10 +177,17 @@ def render_search_controls(app_options: List[str]) -> tuple:
             )
         
         with col_reset:
+            def _reset():
+                st.session_state.search_user_id = ""
+                st.session_state.search_app = "All"
+                if "original_df" in st.session_state:
+                    st.session_state.filtered_df = st.session_state.original_df.copy()
+
             reset_button = st.button(
                 "↻ Reset",
                 use_container_width=True,
-                key="reset_button_main"
+                key="reset_button_main",
+                on_click=_reset
             )
         
         return user_id_input, app_choice, search_button, reset_button
@@ -606,12 +613,6 @@ def main() -> None:
     user_id_input, app_choice, search_button, reset_button = render_search_controls(app_options)
     
     # Handle search/reset
-    if reset_button:
-        st.session_state.filtered_df = st.session_state.original_df.copy()
-        st.session_state.search_user_id = ""
-        st.session_state.search_app = "All"
-        st.rerun()
-    
     if search_button:
         st.session_state.filtered_df = run_search(
             st.session_state.original_df,
