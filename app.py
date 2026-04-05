@@ -70,6 +70,7 @@ def extract_user_info(postback_url: str) -> Dict[str, str]:
 
     offer_name = clean_value(params.get("offer_name", [""])[0])
     task_name = clean_value(params.get("task_name", [""])[0])
+    status = clean_value(params.get("status", [""])[0])
 
     return {
         "app_id": app_id,
@@ -77,6 +78,7 @@ def extract_user_info(postback_url: str) -> Dict[str, str]:
         "raw_user": raw_user,
         "offer_name": offer_name,
         "task_name": task_name,
+        "status": status,
     }
 
 
@@ -98,6 +100,8 @@ def load_prime(df: pd.DataFrame) -> pd.DataFrame:
         df["offer_name"] = df["offer_name"].fillna("—")
     if "task_name" in df.columns:
         df["task_name"] = df["task_name"].fillna("—")
+    if "status" in df.columns:
+        df["status"] = df["status"].fillna("")
 
     return df
 
@@ -210,6 +214,7 @@ def get_display_df(df: pd.DataFrame) -> pd.DataFrame:
             "Datetime",
             "Reward",
             "Payout",
+            "status",
             "Type",
             "offer_name",
             "task_name"
